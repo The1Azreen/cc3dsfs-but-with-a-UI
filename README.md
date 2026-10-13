@@ -1,6 +1,6 @@
 # cc3dsfs (Rust edition)
 
-A Windows viewer for [Loopy's](https://3dscapture.com/) 3DS and DS capture boards, with a UI styled after the 3DS HOME Menu.
+A viewer for [Loopy's](https://3dscapture.com/) 3DS and DS capture boards, with a UI styled after the 3DS HOME Menu. It runs on Windows, and as a kiosk on a Raspberry Pi connected straight to a TV or an upscaler such as the Morph 4K.
 
 This is a Rust rewrite of [cc3dsfs](https://github.com/Lorenzooone/cc3dsfs) by Lorenzooone. The capture code is a port of the original's Loopy device code. The interface is built with [Slint](https://slint.dev).
 
@@ -157,6 +157,69 @@ The program, `FTD3XX.dll` and `ftd2xx.dll` end up in `target\release`. Keep the 
 
 Tests: `cargo test`. Debug builds also have a fake board for trying out layouts without hardware: set `CC3DSFS_DEMO=1` before running.
 
+## Raspberry Pi kiosk
+
+On a Raspberry Pi 400 (or Pi 4, Pi 5, Pi 3), cc3dsfs can run as a kiosk: the Pi boots straight into it, fullscreen on HDMI, with no desktop. Plug the Pi's HDMI into a Morph 4K (or a TV) and the capture board into a USB port.
+
+> The kiosk setup is new and has not been tested on a Pi yet. Please report what works.
+
+### What you need
+
+- Raspberry Pi OS **Lite (64-bit)**. Bookworm or newer.
+- SSH or a keyboard for the first setup. The Pi 400's built-in keyboard works in the kiosk too.
+
+### Install
+
+Either download `cc3dsfs_raspberry_pi_arm64` from the GitHub Actions build (it includes a ready-made binary), extract it, and run:
+
+```
+sudo ./cc3dsfs-pi/pi/install.sh
+```
+
+or build on the Pi itself from a clone of this repo. This installs Rust and takes a while on a Pi:
+
+```
+git clone https://github.com/The1Azreen/cc3dsfs-but-with-a-UI.git
+cd cc3dsfs-but-with-a-UI
+sudo ./pi/install.sh
+```
+
+Then `sudo reboot`. The installer:
+
+- adds a `cc3dsfs` system user;
+- sets up USB permissions for the capture boards;
+- installs a systemd service that starts the kiosk on the first console;
+- lets the kiosk shut down and restart the Pi.
+
+### Display and the Morph 4K
+
+The kiosk outputs 1920×1080 at 60 Hz by default. To change it, edit `/etc/cc3dsfs/kiosk.conf`, then run `sudo systemctl restart cc3dsfs`.
+
+- `MODE`: the HDMI mode, e.g. `1280x720@60`. `sudo cc3dsfs-kiosk --list-modes` shows what the display offers.
+- `OUTPUT`: which HDMI port to use. On a Pi 400, `HDMI-A-1` is the port next to the power socket.
+- `BACKEND`: set to `linuxkms-software` if the GPU renderer doesn't work.
+- `ROTATION`: rotates the whole picture (0, 90, 180 or 270).
+
+If the upscaler or TV is switched on after the Pi, the kiosk retries until a display appears. If the Pi still doesn't detect it, reinstall with `sudo ./pi/install.sh --force-hdmi`. This keeps HDMI on at the configured mode even when no display is detected.
+
+For sound over HDMI, pick the HDMI output (`vc4hdmi`) in **Audio → Output device**.
+
+### Using it
+
+- **Esc** (or a right click) opens the HOME Menu.
+- **HOME Menu → Power** shuts down or restarts the Pi. Shut down before unplugging it.
+- **Power → Exit to console** gives you the login prompt back until the next reboot.
+- Over SSH:
+  - logs: `journalctl -u cc3dsfs -f`
+  - stop the kiosk: `sudo systemctl stop cc3dsfs`
+  - remove it: `sudo ./pi/install.sh --uninstall`
+
+### Boards on the Pi
+
+New 3DS XL and older 3DS/DS boards work out of the box. They use the same direct USB code as WinUSB on Windows.
+
+2024 DS boards need FTDI's D2XX library for Linux (ARMv8). Install `libftd2xx.so` from [FTDI's D2XX page](https://ftdichip.com/drivers/d2xx-drivers/) into `/usr/local/lib`. The udev rule already detaches the kernel's serial driver from those boards.
+
 ## Project layout
 
 - `src/capture/`: device discovery and capture.
@@ -166,21 +229,17 @@ Tests: `cargo test`. Debug builds also have a fake board for trying out layouts 
   - `frame.rs`: frame decoding.
 - `src/audio.rs`: resampling and low-latency output.
 - `src/view.rs`: crop table and rotation.
-<<<<<<< Updated upstream
-- `ui/`: the Slint UI. `theme.slint` holds the 3DS-style components; `app.slint` holds the windows and pages.
-=======
 - `src/presets.rs`: the Game Sack and Morph 4K presets.
 - `src/layout.rs`: screen placement maths, shared with the HDR window.
 - `src/hdr.rs`, `src/hdr.hlsl`: the Windows HDR output window (Direct3D 11, scRGB).
 - `ui/`: the Slint UI. `theme.slint` holds the 3DS-style components; `filter.slint` draws the screen filters; `app.slint` holds the windows and pages.
 - `pi/`: Raspberry Pi kiosk installer, launcher, systemd service and udev rules.
->>>>>>> Stashed changes
 
 ## Not ported (yet)
 
 Compared to the original cc3dsfs, this version doesn't have:
 
-- Linux, macOS and Android builds.
+- macOS and Android builds. Linux is supported through the Raspberry Pi kiosk, but there is no desktop Linux package yet.
 - Non-Loopy devices: IS Nitro/TWL, Optimize, Partner CTR, Nisetro.
 - WinUSB support for the 2024 DS boards.
 - Colour correction, BFI, PAR and the output framerate settings. The original's shaders are replaced by the screen filters above.

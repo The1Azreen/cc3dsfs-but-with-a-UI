@@ -194,6 +194,9 @@ export component AppWindow inherits Window {
     in property <[string]> audio-devices;
     in property <[bool]> profile-exists: [false, false, false, false];
     in property <string> toast;
+    // Running as a Raspberry Pi kiosk: always fullscreen, single output,
+    // Power page instead of Quit.
+    in property <bool> kiosk;
 
     // --- Settings (two-way, persisted by Rust)
     in-out property <int> layout;
@@ -247,6 +250,7 @@ export component AppWindow inherits Window {
     callback menu-visibility-changed(bool);
     in property <[DeviceItem]> presets;
     callback quit();
+    callback power(string);
 
     out property <[string]> layout-names: ["Top above bottom", "Bottom above top", "Side by side", "Side by side (bottom left)", "Top screen only", "Bottom screen only"];
     out property <[string]> mode-3d-names: ["Left eye", "Side by side"];
@@ -453,12 +457,8 @@ export component AppWindow inherits Window {
                             { label: "Profiles", glyph: Icons.profiles, page: "profiles" },
                             { label: "Theme", glyph: Icons.theme, page: "theme" },
                             { label: "Status", glyph: Icons.status, page: "status" },
-<<<<<<< Updated upstream
-                            { label: "Fullscreen", glyph: Icons.fullscreen, page: "!fullscreen" },
-=======
                             { label: "Presets", glyph: Icons.presets, page: "presets" },
                             { label: root.kiosk ? "Power" : "Fullscreen", glyph: root.kiosk ? Icons.power : Icons.fullscreen, page: root.kiosk ? "power" : "!fullscreen" },
->>>>>>> Stashed changes
                         ]: Tile {
                             x: Math.mod(i, parent.per-row) * 116px + 4px;
                             y: Math.floor(i / parent.per-row) * 140px;
@@ -485,9 +485,15 @@ export component AppWindow inherits Window {
                     padding: 12px;
                     spacing: 12px;
                     Pill {
-                        text: "Quit";
+                        text: root.kiosk ? "Power" : "Quit";
                         icon: Icons.power;
-                        clicked => { root.quit(); }
+                        clicked => {
+                            if (root.kiosk) {
+                                root.page = "power";
+                            } else {
+                                root.quit();
+                            }
+                        }
                     }
                     Rectangle { horizontal-stretch: 1; }
                     Pill {
@@ -616,13 +622,13 @@ export component AppWindow inherits Window {
                         value <=> root.separator;
                         changed => { root.changed(); }
                     }
-                    ToggleRow {
+                    if !root.kiosk: ToggleRow {
                         label: "Split into two windows";
                         hint: "Bottom screen gets its own window (for a second monitor)";
                         checked <=> root.split-windows;
                         toggled => { root.changed(); }
                     }
-                    ToggleRow {
+                    if !root.kiosk: ToggleRow {
                         label: "Fullscreen";
                         hint: "F11 or double click";
                         alt: true;
@@ -816,6 +822,42 @@ export component AppWindow inherits Window {
                                 root.theme = i;
                                 root.changed();
                             }
+                        }
+                    }
+                }
+
+                if root.page == "power": Page {
+                    title: "Power";
+                    back => { root.page = ""; }
+                    Row {
+                        label: "Shut down";
+                        hint: "Turn the Raspberry Pi off safely before unplugging it";
+                        Pill {
+                            x: parent.width - self.width - 16px;
+                            y: (parent.height - self.height) / 2;
+                            text: "Shut down";
+                            primary: true;
+                            clicked => { root.power("poweroff"); }
+                        }
+                    }
+                    Row {
+                        label: "Restart";
+                        alt: true;
+                        Pill {
+                            x: parent.width - self.width - 16px;
+                            y: (parent.height - self.height) / 2;
+                            text: "Restart";
+                            clicked => { root.power("reboot"); }
+                        }
+                    }
+                    Row {
+                        label: "Exit to console";
+                        hint: "Stops the kiosk until the next restart";
+                        Pill {
+                            x: parent.width - self.width - 16px;
+                            y: (parent.height - self.height) / 2;
+                            text: "Exit";
+                            clicked => { root.quit(); }
                         }
                     }
                 }

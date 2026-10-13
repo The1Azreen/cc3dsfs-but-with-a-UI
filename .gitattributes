@@ -1,0 +1,3 @@
+# Scripts and config for the Raspberry Pi must keep Unix line endings.
+*.sh text eol=lf
+pi/** text eol=lf

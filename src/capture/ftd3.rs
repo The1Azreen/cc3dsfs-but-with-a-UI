@@ -1,8 +1,8 @@
 //! New 3DS XL Loopy boards (FTDI FT601).
 //!
-//! Works through FTDI's D3XX driver (the Windows default) or WinUSB.
-//! For WinUSB, the FT601 command protocol is spoken directly, as in
-//! `3dscapture_ftd3_libusb_comms.cpp`.
+//! Works through FTDI's D3XX driver (the Windows default) or direct USB
+//! access (WinUSB on Windows, usbfs on Linux). For direct USB, the FT601
+//! command protocol is spoken directly, as in `3dscapture_ftd3_libusb_comms.cpp`.
 
 use std::time::{Duration, Instant};
 
@@ -10,6 +10,7 @@ use nusb::transfer::{Buffer, Bulk, ControlIn, ControlType, In, Out, Recipient};
 use nusb::{Endpoint, Interface, MaybeFuture};
 
 use super::frame::{self, VIDEO_SIZE_3DS_2D, VIDEO_SIZE_3DS_3D};
+#[cfg(windows)]
 use super::ftdi_ffi::{self, D3xx, FT_FLAGS_SUPERSPEED, FT_IO_PENDING, FT_OK, FT_OPEN_BY_SERIAL_NUMBER, FtHandle, Overlapped};
 use super::{BoardKind, DeviceInfo, Driver, Output, Session};
 
@@ -48,6 +49,7 @@ pub fn list_devices() -> Vec<DeviceInfo> {
         }
     };
 
+    #[cfg(windows)]
     if let Some(d3xx) = D3xx::get() {
         for (flags, _ty, serial, desc) in ftdi_ffi::list_ftdi_devices(d3xx.FT_CreateDeviceInfoList, d3xx.FT_GetDeviceInfoDetail) {
             if VALID_DESCRIPTIONS.contains(&desc.as_str()) {
@@ -65,7 +67,7 @@ pub fn list_devices() -> Vec<DeviceInfo> {
     for dev in winusb_candidates() {
         out.push(DeviceInfo {
             board: BoardKind::New3dsXl,
-            driver: Driver::WinUsb,
+            driver: Driver::Usb,
             serial: serial_or_id(dev.serial_number().unwrap_or("")),
             superspeed: matches!(dev.speed(), Some(nusb::Speed::Super | nusb::Speed::SuperPlus)) || dev.usb_version() >= 0x300,
             firmware_id: 0,
@@ -81,9 +83,21 @@ fn winusb_candidates() -> Vec<nusb::DeviceInfo> {
     let Ok(devices) = nusb::list_devices().wait() else { return Vec::new() };
     devices
         .filter(|d| d.vendor_id() == FTDI_VID && VALID_PIDS.contains(&d.product_id()))
-        .filter(|d| d.driver().is_some_and(|drv| drv.eq_ignore_ascii_case("winusb")))
+        .filter(usable_driver)
         .filter(|d| d.product_string().is_some_and(|p| VALID_DESCRIPTIONS.contains(&p)))
         .collect()
+}
+
+/// On Windows only boards bound to WinUSB can be opened directly; the
+/// others belong to FTDI's driver and are listed through D3XX instead.
+#[cfg(windows)]
+fn usable_driver(d: &nusb::DeviceInfo) -> bool {
+    d.driver().is_some_and(|drv| drv.eq_ignore_ascii_case("winusb"))
+}
+
+#[cfg(not(windows))]
+fn usable_driver(_: &nusb::DeviceInfo) -> bool {
+    true
 }
 
 /// Pipe-level operations shared by both drivers.
@@ -95,19 +109,25 @@ trait Ftd3Io {
 }
 
 enum Io {
+    #[cfg(windows)]
     D3xx(D3xxIo),
-    WinUsb(WinUsbIo),
+    Usb(UsbIo),
 }
 
 impl Io {
     fn is_driver(&self) -> bool {
-        matches!(self, Io::D3xx(_))
+        match self {
+            #[cfg(windows)]
+            Io::D3xx(_) => true,
+            Io::Usb(_) => false,
+        }
     }
 
     fn inner(&mut self) -> &mut dyn Ftd3Io {
         match self {
+            #[cfg(windows)]
             Io::D3xx(io) => io,
-            Io::WinUsb(io) => io,
+            Io::Usb(io) => io,
         }
     }
 }
@@ -132,6 +152,7 @@ impl Ftd3Io for Io {
 
 pub fn open(info: &DeviceInfo) -> Result<Box<dyn Session>, String> {
     match info.driver {
+        #[cfg(windows)]
         Driver::FtdiD3xx => {
             // The board sometimes stops answering; drain it on a throwaway handle first.
             {
@@ -145,11 +166,11 @@ pub fn open(info: &DeviceInfo) -> Result<Box<dyn Session>, String> {
         }
         _ => {
             {
-                let mut io = WinUsbIo::open(&info.serial)?;
+                let mut io = UsbIo::open(&info.serial)?;
                 drain_data(&mut io);
                 let _ = io.abort_pipe(BULK_IN);
             }
-            let mut io = Io::WinUsb(WinUsbIo::open(&info.serial)?);
+            let mut io = Io::Usb(UsbIo::open(&info.serial)?);
             let has_3d = configure(&mut io)?;
             Ok(Box::new(Ftd3Session { io, has_3d, superspeed: info.superspeed }))
         }
@@ -270,11 +291,12 @@ impl Session for Ftd3Session {
         let mut stored_3d = true;
         self.setup_3d(true, &mut stored_3d, out.wants_3d())?;
         let result = match &self.io {
+            #[cfg(windows)]
             Io::D3xx(io) => {
                 let (lib, handle) = (io.lib, io.handle);
                 self.run_d3xx(lib, handle, out, could_use_3d, &mut stored_3d)
             }
-            Io::WinUsb(_) => self.run_winusb(out, could_use_3d, &mut stored_3d),
+            Io::Usb(_) => self.run_usb(out, could_use_3d, &mut stored_3d),
         };
         let _ = self.io.abort_pipe(BULK_IN);
         result
@@ -284,13 +306,16 @@ impl Session for Ftd3Session {
 // ---------------------------------------------------------------------------
 // D3XX driver
 
+#[cfg(windows)]
 struct D3xxIo {
     lib: &'static D3xx,
     handle: FtHandle,
 }
 
+#[cfg(windows)]
 unsafe impl Send for D3xxIo {}
 
+#[cfg(windows)]
 impl D3xxIo {
     fn open(serial: &str) -> Result<Self, String> {
         let lib = D3xx::get().ok_or("FTD3XX.dll not found")?;
@@ -319,12 +344,14 @@ impl D3xxIo {
     }
 }
 
+#[cfg(windows)]
 impl Drop for D3xxIo {
     fn drop(&mut self) {
         unsafe { (self.lib.FT_Close)(self.handle) };
     }
 }
 
+#[cfg(windows)]
 impl Ftd3Io for D3xxIo {
     fn write_pipe(&mut self, pipe: u8, data: &[u8]) -> Result<usize, String> {
         let mut transferred = 0u32;
@@ -366,6 +393,7 @@ impl Ftd3Io for D3xxIo {
     }
 }
 
+#[cfg(windows)]
 struct OverlappedReads {
     lib: &'static D3xx,
     handle: FtHandle,
@@ -376,6 +404,7 @@ struct OverlappedReads {
     pending: [bool; CONCURRENT_BUFFERS],
 }
 
+#[cfg(windows)]
 impl OverlappedReads {
     fn new(lib: &'static D3xx, handle: FtHandle) -> Result<Self, String> {
         let mut overlapped: Box<[Overlapped; CONCURRENT_BUFFERS]> = Box::new(Default::default());
@@ -437,6 +466,7 @@ impl OverlappedReads {
     }
 }
 
+#[cfg(windows)]
 impl Drop for OverlappedReads {
     fn drop(&mut self) {
         unsafe { (self.lib.FT_AbortPipe)(self.handle, BULK_IN) };
@@ -449,6 +479,7 @@ impl Drop for OverlappedReads {
 
 impl Ftd3Session {
     /// Port of `fast_capture_call`: keeps 4 overlapped reads in flight.
+    #[cfg(windows)]
     fn run_d3xx(&mut self, lib: &'static D3xx, handle: FtHandle, out: &Output, could_use_3d: bool, stored_3d: &mut bool) -> Result<(), String> {
         let mut reads = OverlappedReads::new(lib, handle)?;
         for i in 0..CONCURRENT_BUFFERS - 1 {
@@ -476,13 +507,14 @@ impl Ftd3Session {
 
     fn ep_in(&mut self) -> &mut Endpoint<Bulk, In> {
         match &mut self.io {
-            Io::WinUsb(io) => &mut io.ep_in,
-            Io::D3xx(_) => unreachable!("WinUSB capture loop on a D3XX handle"),
+            Io::Usb(io) => &mut io.ep_in,
+            #[cfg(windows)]
+            Io::D3xx(_) => unreachable!("direct USB capture loop on a D3XX handle"),
         }
     }
 
     /// Port of `ftd3_libusb_capture_main_loop`, using nusb's transfer queue.
-    fn run_winusb(&mut self, out: &Output, could_use_3d: bool, stored_3d: &mut bool) -> Result<(), String> {
+    fn run_usb(&mut self, out: &Output, could_use_3d: bool, stored_3d: &mut bool) -> Result<(), String> {
         let submit_all = |ep: &mut Endpoint<Bulk, In>, is_3d: bool| {
             for _ in 0..CONCURRENT_BUFFERS {
                 ep.submit(Buffer::new(capture_size(is_3d)));
@@ -529,7 +561,7 @@ fn drain_pending(ep: &mut Endpoint<Bulk, In>) {
 }
 
 // ---------------------------------------------------------------------------
-// WinUSB: speak the FT601 command protocol directly.
+// Direct USB (WinUSB / usbfs): speak the FT601 command protocol directly.
 
 const COMMAND_PIPE: u8 = 0x01;
 const CREATE_PIPE_ID: u8 = 0x82;
@@ -540,7 +572,7 @@ const CMD_SET_STREAM_PIPE: u8 = 2;
 const CMD_CREATE: u8 = 3;
 const CMD_DESTROY: u8 = 3;
 
-struct WinUsbIo {
+struct UsbIo {
     _interfaces: Vec<Interface>,
     ep_cmd: Endpoint<Bulk, Out>,
     ep_out: Endpoint<Bulk, Out>,
@@ -555,7 +587,7 @@ fn find_endpoint<D: nusb::transfer::EndpointDirection>(interfaces: &[Interface],
         .ok_or_else(|| format!("endpoint {addr:#04x} not found"))
 }
 
-impl WinUsbIo {
+impl UsbIo {
     fn open(serial: &str) -> Result<Self, String> {
         let candidates = winusb_candidates();
         let mut extra_id = 0;
@@ -573,7 +605,7 @@ impl WinUsbIo {
             })
             .ok_or("Device not found")?;
         let device = dev_info.open().wait().map_err(|e| format!("Open failed ({e})"))?;
-        let cmd_intf = device.claim_interface(0).wait().map_err(|e| format!("Claim failed ({e})"))?;
+        let cmd_intf = super::claim_interface(&device, 0).map_err(|e| format!("Claim failed ({e})"))?;
 
         for index in [0x8000u16, 0x8400] {
             let data = cmd_intf
@@ -588,7 +620,7 @@ impl WinUsbIo {
             }
         }
 
-        let bulk_intf = device.claim_interface(1).wait().map_err(|e| format!("Claim failed ({e})"))?;
+        let bulk_intf = super::claim_interface(&device, 1).map_err(|e| format!("Claim failed ({e})"))?;
         let interfaces = vec![cmd_intf, bulk_intf];
         let mut io = Self {
             ep_cmd: find_endpoint(&interfaces, COMMAND_PIPE)?,
@@ -634,7 +666,7 @@ impl WinUsbIo {
     }
 }
 
-impl Ftd3Io for WinUsbIo {
+impl Ftd3Io for UsbIo {
     fn write_pipe(&mut self, pipe: u8, data: &[u8]) -> Result<usize, String> {
         self.send_len_command(pipe, CMD_RW_PREPARE, data.len() as u32, COMMAND_TIMEOUT)?;
         let done = self.ep_out.transfer_blocking(data.to_vec().into(), COMMAND_TIMEOUT);

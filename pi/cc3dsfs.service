@@ -1,0 +1,29 @@
+[Unit]
+Description=cc3dsfs capture viewer (kiosk)
+Documentation=https://github.com/The1Azreen/cc3dsfs-but-with-a-UI
+After=systemd-user-sessions.service sound.target
+# Takes over the first console. "Exit to console" in the Power page brings
+# the login prompt back.
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+OnSuccess=getty@tty1.service
+
+[Service]
+User=cc3dsfs
+SupplementaryGroups=video render input audio plugdev
+Environment=HOME=/var/lib/cc3dsfs
+WorkingDirectory=/var/lib/cc3dsfs
+ExecStart=/usr/local/bin/cc3dsfs-kiosk
+# Restart after a crash, or while the display is still off at boot.
+Restart=on-failure
+RestartSec=3
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

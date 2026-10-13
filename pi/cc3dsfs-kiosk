@@ -1,0 +1,61 @@
+#!/bin/sh
+# Starts cc3dsfs fullscreen on the HDMI output, without a desktop.
+# Started by cc3dsfs.service; settings live in /etc/cc3dsfs/kiosk.conf.
+#
+#   cc3dsfs-kiosk                 run the kiosk
+#   cc3dsfs-kiosk --list-modes    show the display modes of the output
+#   cc3dsfs-kiosk --list-outputs  show the display connectors
+set -eu
+
+CONF=/etc/cc3dsfs/kiosk.conf
+BIN=/opt/cc3dsfs/cc3dsfs
+
+MODE=
+OUTPUT=
+BACKEND=linuxkms
+ROTATION=0
+if [ -r "$CONF" ]; then
+    . "$CONF"
+fi
+
+export SLINT_BACKEND="$BACKEND"
+if [ -n "$OUTPUT" ]; then
+    export SLINT_DRM_OUTPUT="$OUTPUT"
+fi
+if [ "$ROTATION" != "0" ]; then
+    export SLINT_KMS_ROTATION="$ROTATION"
+fi
+
+# Slint prints one "Index: N Width: W Height: H Refresh Rate: R" line per mode.
+list_modes() {
+    SLINT_DRM_MODE=list "$BIN" --kiosk 2>&1 | grep '^Index:' || true
+}
+
+case "${1:-}" in
+    --list-modes)
+        list_modes
+        exit 0
+        ;;
+    --list-outputs)
+        SLINT_DRM_OUTPUT=list "$BIN" --kiosk 2>&1 | grep -v '^$' || true
+        exit 0
+        ;;
+esac
+
+# Slint selects modes by index, so translate WIDTHxHEIGHT@REFRESH into one.
+if [ -n "$MODE" ]; then
+    width=${MODE%%x*}
+    rest=${MODE#*x}
+    height=${rest%%@*}
+    refresh=
+    case "$MODE" in *@*) refresh=${MODE#*@} ;; esac
+    index=$(list_modes | awk -v w="$width" -v h="$height" -v r="$refresh" \
+        '$4 == w && $6 == h && (r == "" || $9 == r) { print $2; exit }')
+    if [ -n "$index" ]; then
+        export SLINT_DRM_MODE="$index"
+    else
+        echo "cc3dsfs-kiosk: mode $MODE not offered by the display, using its preferred mode" >&2
+    fi
+fi
+
+exec "$BIN" --kiosk
