@@ -24,6 +24,7 @@ This is a Rust rewrite of [cc3dsfs](https://github.com/Lorenzooone/cc3dsfs) by L
 ## Features
 
 - Connects automatically and reconnects after you unplug the board.
+- Live preview: while capturing, the Layout, Video and 3D pages open as a side panel next to the game, so you see each change as you make it.
 - Layouts:
   - Top above bottom, bottom above top, side by side (either order), top only or bottom only.
   - Adjustable bottom screen size, screen offset and gap between screens.
@@ -35,6 +36,20 @@ This is a Rust rewrite of [cc3dsfs](https://github.com/Lorenzooone/cc3dsfs) by L
 - 3D capture, shown as the left eye only or side by side.
 - 4 profile slots; settings are saved automatically.
 - Seven console-colour themes.
+
+## Layout and Video
+
+While capturing, the Layout and Video pages open as a panel next to the game. The game stays live, so each change shows on screen as you make it.
+
+**Layout** sets how the screens are arranged, the bottom screen's size and position, the gap between the screens, split windows and fullscreen.
+
+![Layout page beside the live capture](docs/layout-live.png)
+
+**Video** sets the crop, game-specific crops, integer scaling, smoothing and rotation for each screen.
+
+![Video page beside the live capture](docs/video-live.png)
+
+The 3D page opens the same way. Narrow windows put the panel along the bottom instead.
 
 ## Controls
 

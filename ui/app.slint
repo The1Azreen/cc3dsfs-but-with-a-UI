@@ -184,6 +184,11 @@ export component AppWindow inherits Window {
     in-out property <string> page: "";
     property <bool> show-menu: menu-open || !connected;
     property <bool> show-home-hint;
+    // Pages that change what the screens look like are shown next to the live capture.
+    property <bool> live-preview: connected && (page == "layout" || page == "video" || page == "3d");
+    property <bool> panel-side: root.width >= 760px;
+    property <length> panel-w: panel-side ? min(460px, root.width * 0.45) : root.width;
+    property <length> panel-h: panel-side ? root.height : root.height * 0.55;
 
     callback settings-changed();
     callback connect-device(int);
@@ -239,6 +244,11 @@ export component AppWindow inherits Window {
         }
 
         Screens {
+            x: 0;
+            y: 0;
+            width: root.live-preview && root.panel-side ? root.width - root.panel-w : root.width;
+            height: root.live-preview && !root.panel-side ? root.height - root.panel-h : root.height;
+            animate width, height { duration: 180ms; easing: ease-out; }
             top-image: root.top-image;
             bottom-image: root.bottom-image;
             show-top: root.layout != 5;
@@ -292,7 +302,7 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.show-menu: home := Rectangle {
+        if root.show-menu && !root.live-preview: home := Rectangle {
             opacity: 0;
             init => { self.opacity = 1; }
             animate opacity { duration: 160ms; }
@@ -439,301 +449,304 @@ export component AppWindow inherits Window {
                 }
             }
 
-            // Settings pages slide over the HOME Menu.
-            if root.page != "": Rectangle {
-                background: #00000055;
-                TouchArea {
-                    clicked => { root.page = ""; }
+        }
+
+        // Settings pages: a modal over the HOME Menu, or, for pages whose effect
+        // is visible on screen, a panel docked beside the live capture.
+        if root.show-menu && root.page != "": Rectangle {
+            background: root.live-preview ? transparent : #00000055;
+            TouchArea {
+                enabled: !root.live-preview;
+                clicked => { root.page = ""; }
+            }
+            page := Rectangle {
+                x: root.live-preview ? (root.panel-side ? parent.width - root.panel-w : 0) : (parent.width - self.width) / 2;
+                y: root.live-preview ? (root.panel-side ? 0 : parent.height - root.panel-h) : 20px;
+                width: root.live-preview ? root.panel-w : min(parent.width - 24px, 720px);
+                height: root.live-preview ? root.panel-h : parent.height - 40px;
+
+                if root.page == "connection": Page {
+                    title: "Connection";
+                    back => { root.page = ""; }
+                    Row {
+                        label: root.connected ? root.device-name : "Not connected";
+                        hint: root.connected ? "Driver: " + root.device-driver : root.status-message;
+                        Pill {
+                            x: parent.width - self.width - 16px;
+                            y: (parent.height - self.height) / 2;
+                            text: "Disconnect";
+                            enabled: root.connected || root.connecting;
+                            clicked => { root.disconnect(); }
+                        }
+                    }
+                    ToggleRow {
+                        label: "Connect automatically";
+                        hint: "Connect and reconnect when a board is plugged in";
+                        alt: true;
+                        checked <=> root.auto-connect;
+                        toggled => { root.changed(); }
+                    }
+                    Row {
+                        label: "Boards found";
+                        hint: root.devices.length == 0 ? "None. Check the cable and the driver (see README)." : "Select one to connect";
+                    }
+                    for dev[i] in root.devices: Row {
+                        label: dev.name;
+                        hint: dev.detail;
+                        alt: Math.mod(i, 2) == 0;
+                        Pill {
+                            x: parent.width - self.width - 16px;
+                            y: (parent.height - self.height) / 2;
+                            text: "Connect";
+                            primary: true;
+                            clicked => { root.connect-device(i); }
+                        }
+                    }
                 }
-                page := Rectangle {
-                    x: (parent.width - self.width) / 2;
-                    y: 20px;
-                    width: min(parent.width - 24px, 720px);
-                    height: parent.height - 40px;
 
-                    if root.page == "connection": Page {
-                        title: "Connection";
-                        back => { root.page = ""; }
-                        Row {
-                            label: root.connected ? root.device-name : "Not connected";
-                            hint: root.connected ? "Driver: " + root.device-driver : root.status-message;
+                if root.page == "layout": Page {
+                    title: "Layout";
+                    back => { root.page = ""; }
+                    StepperRow {
+                        label: "Screens";
+                        value: root.layout-names[root.layout];
+                        prev => { root.layout = root.cycle(root.layout, 6, -1); root.changed(); }
+                        next => { root.layout = root.cycle(root.layout, 6, 1); root.changed(); }
+                    }
+                    SliderRow {
+                        label: "Bottom screen size";
+                        hint: "Relative to the top screen";
+                        alt: true;
+                        minimum: 0.25;
+                        maximum: 2.0;
+                        step: 0.05;
+                        suffix: "x";
+                        value <=> root.bottom-scale;
+                        changed => { root.changed(); }
+                    }
+                    SliderRow {
+                        label: "Screen offset";
+                        hint: "Where the smaller screen sits";
+                        minimum: 0;
+                        maximum: 1;
+                        step: 0.05;
+                        value <=> root.screen-offset;
+                        changed => { root.changed(); }
+                    }
+                    SliderRow {
+                        label: "Gap between screens";
+                        alt: true;
+                        minimum: 0;
+                        maximum: 120;
+                        step: 2;
+                        suffix: " px";
+                        value <=> root.separator;
+                        changed => { root.changed(); }
+                    }
+                    ToggleRow {
+                        label: "Split into two windows";
+                        hint: "Bottom screen gets its own window (for a second monitor)";
+                        checked <=> root.split-windows;
+                        toggled => { root.changed(); }
+                    }
+                    ToggleRow {
+                        label: "Fullscreen";
+                        hint: "F11 or double click";
+                        alt: true;
+                        checked: root.fullscreen;
+                        toggled => { root.toggle-fullscreen(); }
+                    }
+                }
+
+                if root.page == "video": Page {
+                    title: "Video";
+                    back => { root.page = ""; }
+                    StepperRow {
+                        label: "Crop";
+                        hint: root.is-3ds ? "For DS, GBA and Virtual Console games" : "For GBA games";
+                        value: root.crop-names.length > 0 ? root.crop-names[root.crop-index] : "-";
+                        prev => { root.crop-index = root.cycle(root.crop-index, root.crop-names.length, -1); root.changed(); }
+                        next => { root.crop-index = root.cycle(root.crop-index, root.crop-names.length, 1); root.changed(); }
+                    }
+                    ToggleRow {
+                        label: "Game-specific crops";
+                        hint: "Pokémon, Mystery Dungeon…";
+                        alt: true;
+                        checked <=> root.game-crops;
+                        toggled => { root.crop-index = 0; root.changed(); }
+                    }
+                    ToggleRow {
+                        label: "Integer scaling";
+                        hint: "Sharp pixels, may leave borders";
+                        checked <=> root.integer-scaling;
+                        toggled => { root.changed(); }
+                    }
+                    ToggleRow {
+                        label: "Smoothing";
+                        hint: "Blur when scaling";
+                        alt: true;
+                        checked <=> root.smoothing;
+                        toggled => { root.changed(); }
+                    }
+                    StepperRow {
+                        label: "Top screen rotation";
+                        value: root.rotation-name(root.top-rotation);
+                        prev => { root.top-rotation = Math.mod(root.top-rotation + 270, 360); root.changed(); }
+                        next => { root.top-rotation = Math.mod(root.top-rotation + 90, 360); root.changed(); }
+                    }
+                    StepperRow {
+                        label: "Bottom screen rotation";
+                        alt: true;
+                        value: root.rotation-name(root.bottom-rotation);
+                        prev => { root.bottom-rotation = Math.mod(root.bottom-rotation + 270, 360); root.changed(); }
+                        next => { root.bottom-rotation = Math.mod(root.bottom-rotation + 90, 360); root.changed(); }
+                    }
+                }
+
+                if root.page == "audio": Page {
+                    title: "Audio";
+                    back => { root.page = ""; }
+                    SliderRow {
+                        label: "Volume";
+                        minimum: 0;
+                        maximum: 200;
+                        step: 5;
+                        suffix: "%";
+                        value <=> root.volume;
+                        changed => { root.changed(); }
+                    }
+                    ToggleRow {
+                        label: "Mute";
+                        hint: "M while capturing";
+                        alt: true;
+                        checked <=> root.muted;
+                        toggled => { root.changed(); }
+                    }
+                    StepperRow {
+                        label: "Output device";
+                        value: root.audio-devices.length > 0 ? root.audio-devices[root.audio-device-index] : "Default";
+                        prev => { root.audio-device-index = root.cycle(root.audio-device-index, root.audio-devices.length, -1); root.changed(); }
+                        next => { root.audio-device-index = root.cycle(root.audio-device-index, root.audio-devices.length, 1); root.changed(); }
+                    }
+                }
+
+                if root.page == "3d": Page {
+                    title: "3D";
+                    back => { root.page = ""; }
+                    Row {
+                        label: root.can-3d ? "This board supports 3D" : "3D not available";
+                        hint: root.can-3d ? "" : "Needs a New 3DS XL board with 3D support on a USB 3 port";
+                    }
+                    ToggleRow {
+                        label: "Capture in 3D";
+                        alt: true;
+                        checked <=> root.enable-3d;
+                        toggled => { root.changed(); }
+                    }
+                    StepperRow {
+                        label: "3D display";
+                        value: root.mode-3d-names[root.mode-3d];
+                        prev => { root.mode-3d = root.cycle(root.mode-3d, 2, -1); root.changed(); }
+                        next => { root.mode-3d = root.cycle(root.mode-3d, 2, 1); root.changed(); }
+                    }
+                }
+
+                if root.page == "profiles": Page {
+                    title: "Profiles";
+                    back => { root.page = ""; }
+                    for slot[i] in root.profile-exists: Row {
+                        label: "Profile " + (i + 1);
+                        hint: slot ? "Saved" : "Empty";
+                        alt: Math.mod(i, 2) == 1;
+                        HorizontalLayout {
+                            x: parent.width - self.width - 16px;
+                            width: 230px;
+                            spacing: 10px;
+                            padding-top: 8px;
+                            padding-bottom: 8px;
                             Pill {
-                                x: parent.width - self.width - 16px;
-                                y: (parent.height - self.height) / 2;
-                                text: "Disconnect";
-                                enabled: root.connected || root.connecting;
-                                clicked => { root.disconnect(); }
+                                text: "Save";
+                                clicked => { root.save-profile(i); }
                             }
-                        }
-                        ToggleRow {
-                            label: "Connect automatically";
-                            hint: "Connect and reconnect when a board is plugged in";
-                            alt: true;
-                            checked <=> root.auto-connect;
-                            toggled => { root.changed(); }
-                        }
-                        Row {
-                            label: "Boards found";
-                            hint: root.devices.length == 0 ? "None. Check the cable and the driver (see README)." : "Select one to connect";
-                        }
-                        for dev[i] in root.devices: Row {
-                            label: dev.name;
-                            hint: dev.detail;
-                            alt: Math.mod(i, 2) == 0;
                             Pill {
-                                x: parent.width - self.width - 16px;
-                                y: (parent.height - self.height) / 2;
-                                text: "Connect";
+                                text: "Load";
                                 primary: true;
-                                clicked => { root.connect-device(i); }
+                                enabled: slot;
+                                clicked => { root.load-profile(i); }
                             }
                         }
                     }
-
-                    if root.page == "layout": Page {
-                        title: "Layout";
-                        back => { root.page = ""; }
-                        StepperRow {
-                            label: "Screens";
-                            value: root.layout-names[root.layout];
-                            prev => { root.layout = root.cycle(root.layout, 6, -1); root.changed(); }
-                            next => { root.layout = root.cycle(root.layout, 6, 1); root.changed(); }
-                        }
-                        SliderRow {
-                            label: "Bottom screen size";
-                            hint: "Relative to the top screen";
-                            alt: true;
-                            minimum: 0.25;
-                            maximum: 2.0;
-                            step: 0.05;
-                            suffix: "x";
-                            value <=> root.bottom-scale;
-                            changed => { root.changed(); }
-                        }
-                        SliderRow {
-                            label: "Screen offset";
-                            hint: "Where the smaller screen sits";
-                            minimum: 0;
-                            maximum: 1;
-                            step: 0.05;
-                            value <=> root.screen-offset;
-                            changed => { root.changed(); }
-                        }
-                        SliderRow {
-                            label: "Gap between screens";
-                            alt: true;
-                            minimum: 0;
-                            maximum: 120;
-                            step: 2;
-                            suffix: " px";
-                            value <=> root.separator;
-                            changed => { root.changed(); }
-                        }
-                        ToggleRow {
-                            label: "Split into two windows";
-                            hint: "Bottom screen gets its own window (for a second monitor)";
-                            checked <=> root.split-windows;
-                            toggled => { root.changed(); }
-                        }
-                        ToggleRow {
-                            label: "Fullscreen";
-                            hint: "F11 or double click";
-                            alt: true;
-                            checked: root.fullscreen;
-                            toggled => { root.toggle-fullscreen(); }
+                    Row {
+                        label: "Reset all settings";
+                        Pill {
+                            x: parent.width - self.width - 16px;
+                            y: (parent.height - self.height) / 2;
+                            text: "Reset";
+                            clicked => { root.reset-settings(); }
                         }
                     }
+                }
 
-                    if root.page == "video": Page {
-                        title: "Video";
-                        back => { root.page = ""; }
-                        StepperRow {
-                            label: "Crop";
-                            hint: root.is-3ds ? "For DS, GBA and Virtual Console games" : "For GBA games";
-                            value: root.crop-names.length > 0 ? root.crop-names[root.crop-index] : "-";
-                            prev => { root.crop-index = root.cycle(root.crop-index, root.crop-names.length, -1); root.changed(); }
-                            next => { root.crop-index = root.cycle(root.crop-index, root.crop-names.length, 1); root.changed(); }
-                        }
-                        ToggleRow {
-                            label: "Game-specific crops";
-                            hint: "Pokémon, Mystery Dungeon…";
-                            alt: true;
-                            checked <=> root.game-crops;
-                            toggled => { root.crop-index = 0; root.changed(); }
-                        }
-                        ToggleRow {
-                            label: "Integer scaling";
-                            hint: "Sharp pixels, may leave borders";
-                            checked <=> root.integer-scaling;
-                            toggled => { root.changed(); }
-                        }
-                        ToggleRow {
-                            label: "Smoothing";
-                            hint: "Blur when scaling";
-                            alt: true;
-                            checked <=> root.smoothing;
-                            toggled => { root.changed(); }
-                        }
-                        StepperRow {
-                            label: "Top screen rotation";
-                            value: root.rotation-name(root.top-rotation);
-                            prev => { root.top-rotation = Math.mod(root.top-rotation + 270, 360); root.changed(); }
-                            next => { root.top-rotation = Math.mod(root.top-rotation + 90, 360); root.changed(); }
-                        }
-                        StepperRow {
-                            label: "Bottom screen rotation";
-                            alt: true;
-                            value: root.rotation-name(root.bottom-rotation);
-                            prev => { root.bottom-rotation = Math.mod(root.bottom-rotation + 270, 360); root.changed(); }
-                            next => { root.bottom-rotation = Math.mod(root.bottom-rotation + 90, 360); root.changed(); }
-                        }
-                    }
-
-                    if root.page == "audio": Page {
-                        title: "Audio";
-                        back => { root.page = ""; }
-                        SliderRow {
-                            label: "Volume";
-                            minimum: 0;
-                            maximum: 200;
-                            step: 5;
-                            suffix: "%";
-                            value <=> root.volume;
-                            changed => { root.changed(); }
-                        }
-                        ToggleRow {
-                            label: "Mute";
-                            hint: "M while capturing";
-                            alt: true;
-                            checked <=> root.muted;
-                            toggled => { root.changed(); }
-                        }
-                        StepperRow {
-                            label: "Output device";
-                            value: root.audio-devices.length > 0 ? root.audio-devices[root.audio-device-index] : "Default";
-                            prev => { root.audio-device-index = root.cycle(root.audio-device-index, root.audio-devices.length, -1); root.changed(); }
-                            next => { root.audio-device-index = root.cycle(root.audio-device-index, root.audio-devices.length, 1); root.changed(); }
-                        }
-                    }
-
-                    if root.page == "3d": Page {
-                        title: "3D";
-                        back => { root.page = ""; }
-                        Row {
-                            label: root.can-3d ? "This board supports 3D" : "3D not available";
-                            hint: root.can-3d ? "" : "Needs a New 3DS XL board with 3D support on a USB 3 port";
-                        }
-                        ToggleRow {
-                            label: "Capture in 3D";
-                            alt: true;
-                            checked <=> root.enable-3d;
-                            toggled => { root.changed(); }
-                        }
-                        StepperRow {
-                            label: "3D display";
-                            value: root.mode-3d-names[root.mode-3d];
-                            prev => { root.mode-3d = root.cycle(root.mode-3d, 2, -1); root.changed(); }
-                            next => { root.mode-3d = root.cycle(root.mode-3d, 2, 1); root.changed(); }
-                        }
-                    }
-
-                    if root.page == "profiles": Page {
-                        title: "Profiles";
-                        back => { root.page = ""; }
-                        for slot[i] in root.profile-exists: Row {
-                            label: "Profile " + (i + 1);
-                            hint: slot ? "Saved" : "Empty";
-                            alt: Math.mod(i, 2) == 1;
-                            HorizontalLayout {
-                                x: parent.width - self.width - 16px;
-                                width: 230px;
-                                spacing: 10px;
-                                padding-top: 8px;
-                                padding-bottom: 8px;
-                                Pill {
-                                    text: "Save";
-                                    clicked => { root.save-profile(i); }
-                                }
-                                Pill {
-                                    text: "Load";
-                                    primary: true;
-                                    enabled: slot;
-                                    clicked => { root.load-profile(i); }
-                                }
-                            }
-                        }
-                        Row {
-                            label: "Reset all settings";
-                            Pill {
-                                x: parent.width - self.width - 16px;
-                                y: (parent.height - self.height) / 2;
-                                text: "Reset";
-                                clicked => { root.reset-settings(); }
-                            }
-                        }
-                    }
-
-                    if root.page == "theme": Page {
-                        title: "Theme";
-                        back => { root.page = ""; }
-                        for name[i] in Theme.names: Row {
-                            label: name;
-                            alt: Math.mod(i, 2) == 1;
-                            Rectangle {
-                                x: parent.width - self.width - 20px;
-                                y: (parent.height - self.height) / 2;
-                                width: 34px;
-                                height: 34px;
-                                border-radius: 17px;
-                                border-width: root.theme == i ? 3px : 1px;
-                                border-color: root.theme == i ? Theme.text : Theme.panel-edge;
-                                background: i == 1 ? #3d4148 : i == 2 ? #e23a2e : i == 3 ? #ef6f8f : i == 4 ? #8fa3b3 : i == 5 ? #4caf50 : i == 6 ? #6c4bc6 : #12a5e2;
-                            }
-                            TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => {
-                                    root.theme = i;
-                                    root.changed();
-                                }
-                            }
-                        }
-                    }
-
-                    if root.page == "status": Page {
-                        title: "Status";
-                        back => { root.page = ""; }
-                        Row {
-                            label: "Board";
-                            hint: root.connected ? root.device-name : "Not connected";
-                        }
-                        Row {
-                            label: "Driver";
-                            hint: root.connected ? root.device-driver : "-";
-                            alt: true;
-                        }
-                        Row {
-                            label: "Frame rate";
-                            hint: root.fps + " fps";
-                        }
-                        Row {
-                            label: "3D";
-                            hint: root.can-3d ? (root.enable-3d ? "On" : "Off") : "Not available";
-                            alt: true;
-                        }
-                        Row {
-                            label: "Shortcuts";
-                            hint: "Esc: HOME Menu · F11: fullscreen · M: mute · right click: menu";
-                        }
-                        Row {
-                            label: "About";
-                            hint: "cc3dsfs Rust edition. Based on cc3dsfs by Lorenzooone (MIT).";
-                            alt: true;
-                        }
+                if root.page == "theme": Page {
+                    title: "Theme";
+                    back => { root.page = ""; }
+                    for name[i] in Theme.names: Row {
+                        label: name;
+                        alt: Math.mod(i, 2) == 1;
                         Rectangle {
-                            height: 150px;
-                            AboutSlint {
-                                height: 130px;
+                            x: parent.width - self.width - 20px;
+                            y: (parent.height - self.height) / 2;
+                            width: 34px;
+                            height: 34px;
+                            border-radius: 17px;
+                            border-width: root.theme == i ? 3px : 1px;
+                            border-color: root.theme == i ? Theme.text : Theme.panel-edge;
+                            background: i == 1 ? #3d4148 : i == 2 ? #e23a2e : i == 3 ? #ef6f8f : i == 4 ? #8fa3b3 : i == 5 ? #4caf50 : i == 6 ? #6c4bc6 : #12a5e2;
+                        }
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.theme = i;
+                                root.changed();
                             }
+                        }
+                    }
+                }
+
+                if root.page == "status": Page {
+                    title: "Status";
+                    back => { root.page = ""; }
+                    Row {
+                        label: "Board";
+                        hint: root.connected ? root.device-name : "Not connected";
+                    }
+                    Row {
+                        label: "Driver";
+                        hint: root.connected ? root.device-driver : "-";
+                        alt: true;
+                    }
+                    Row {
+                        label: "Frame rate";
+                        hint: root.fps + " fps";
+                    }
+                    Row {
+                        label: "3D";
+                        hint: root.can-3d ? (root.enable-3d ? "On" : "Off") : "Not available";
+                        alt: true;
+                    }
+                    Row {
+                        label: "Shortcuts";
+                        hint: "Esc: HOME Menu · F11: fullscreen · M: mute · right click: menu";
+                    }
+                    Row {
+                        label: "About";
+                        hint: "cc3dsfs Rust edition. Based on cc3dsfs by Lorenzooone (MIT).";
+                        alt: true;
+                    }
+                    Rectangle {
+                        height: 150px;
+                        AboutSlint {
+                            height: 130px;
                         }
                     }
                 }

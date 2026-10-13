@@ -231,12 +231,26 @@ export component Row inherits Rectangle {
     in property <string> label;
     in property <string> hint;
     in property <bool> alt;
-    height: hint == "" ? 54px : 66px;
+    // Rows with wide controls put them under the label when space is short.
+    in property <bool> stack-when-narrow;
+    in property <length> label-width: root.width * 0.44;
+
+    out property <bool> stacked: stack-when-narrow && root.width < 520px;
+    property <length> text-h: hint == "" ? 54px : 66px;
+    // Where subclasses place their control.
+    out property <length> control-x: stacked ? 14px : root.width * 0.44;
+    out property <length> control-y: stacked ? text-h - 12px : 0;
+    out property <length> control-w: stacked ? root.width - 28px : root.width * 0.56 - 14px;
+    out property <length> control-h: stacked ? 48px : text-h;
+
+    height: stacked ? text-h + 36px : text-h;
     background: alt ? Theme.row-alt : Theme.row;
 
     VerticalLayout {
         x: 18px;
-        width: parent.width * 0.5;
+        y: 0;
+        height: root.stacked ? root.text-h - 8px : root.text-h;
+        width: root.stacked ? root.width - 36px : root.label-width;
         alignment: center;
         spacing: 2px;
         Text {
@@ -266,19 +280,24 @@ export component StepperRow inherits Row {
     in property <string> value;
     callback prev;
     callback next;
+    stack-when-narrow: true;
     HorizontalLayout {
-        x: parent.width * 0.5;
-        width: parent.width * 0.5 - 14px;
-        alignment: end;
+        x: root.control-x;
+        y: root.control-y;
+        width: root.control-w;
+        height: root.control-h;
+        alignment: root.stacked ? stretch : end;
         spacing: 10px;
-        padding-top: 10px;
-        padding-bottom: 10px;
+        padding-top: 7px;
+        padding-bottom: 7px;
         ArrowButton {
             left: true;
             clicked => { root.prev(); }
         }
         Rectangle {
-            min-width: 150px;
+            min-width: 110px;
+            max-width: root.stacked ? 10000px : 170px;
+            horizontal-stretch: 1;
             Text {
                 text: root.value;
                 color: Theme.accent;
@@ -296,10 +315,11 @@ export component StepperRow inherits Row {
     }
 }
 
-// On/Off switch drawn like the 3DS pill toggles.
+// On/Off switch drawn like the 3DS pill toggles. Narrow enough to never stack.
 export component ToggleRow inherits Row {
     in-out property <bool> checked;
     callback toggled;
+    label-width: root.width - 150px;
     Rectangle {
         x: parent.width - self.width - 20px;
         width: 104px;
@@ -343,26 +363,31 @@ export component SliderRow inherits Row {
     in property <float> step: 1;
     in property <string> suffix;
     callback changed;
+    stack-when-narrow: true;
 
-    property <length> track-x: root.width * 0.5;
-    property <length> track-w: root.width * 0.5 - 100px;
+    property <length> track-x: root.control-x + 12px;
+    property <length> track-w: root.control-w - 96px;
+    property <length> mid-y: root.control-y + root.control-h / 2;
+    property <float> t: (root.value - root.minimum) / (root.maximum - root.minimum);
 
-    track := Rectangle {
+    Rectangle {
         x: root.track-x;
+        y: root.mid-y - self.height / 2;
         width: root.track-w;
         height: 8px;
         border-radius: 4px;
         background: #d4d4d4;
         Rectangle {
             x: 0;
-            width: parent.width * (root.value - root.minimum) / (root.maximum - root.minimum);
+            width: parent.width * root.t;
             height: parent.height;
             border-radius: 4px;
             background: Theme.accent;
         }
     }
     Rectangle {
-        x: root.track-x + root.track-w * (root.value - root.minimum) / (root.maximum - root.minimum) - self.width / 2;
+        x: root.track-x + root.track-w * root.t - self.width / 2;
+        y: root.mid-y - self.height / 2;
         width: 22px;
         height: 22px;
         border-radius: 11px;
@@ -373,7 +398,8 @@ export component SliderRow inherits Row {
         drop-shadow-color: Theme.shadow;
     }
     Text {
-        x: root.track-x + root.track-w + 14px;
+        x: root.track-x + root.track-w + 18px;
+        y: root.mid-y - self.height / 2;
         width: 70px;
         text: (round(root.value * 100) / 100) + root.suffix;
         color: Theme.accent;
@@ -382,7 +408,9 @@ export component SliderRow inherits Row {
     }
     TouchArea {
         x: root.track-x - 10px;
+        y: root.control-y;
         width: root.track-w + 20px;
+        height: root.control-h;
         mouse-cursor: pointer;
         function update(px: length) {
             let t = max(0, min(1, (px - 10px) / root.track-w));
