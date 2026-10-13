@@ -34,6 +34,15 @@ pub struct Settings {
     pub split_windows: bool,
     pub auto_connect: bool,
     pub theme: i32,
+    /// Screen filter: 0 off, 1 LCD grid, 2 fine grid, 3 scanlines.
+    pub filter_style: i32,
+    /// Filter strength in percent.
+    pub filter_strength: f32,
+    /// Windows: show the game in an HDR window (see `hdr.rs`).
+    pub hdr_output: bool,
+    /// Brightness of SDR white in the HDR window, in nits, before the
+    /// filter compensation.
+    pub hdr_brightness: f32,
 }
 
 impl Default for Settings {
@@ -59,6 +68,10 @@ impl Default for Settings {
             split_windows: false,
             auto_connect: true,
             theme: 0,
+            filter_style: 0,
+            filter_strength: 30.0,
+            hdr_output: false,
+            hdr_brightness: 300.0,
         }
     }
 }

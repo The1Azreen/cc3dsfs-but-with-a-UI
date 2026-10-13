@@ -2,6 +2,12 @@
 
 mod audio;
 mod capture;
+#[cfg(windows)]
+mod hdr;
+// Only the Windows HDR window lays screens out outside Slint (tests use it everywhere).
+#[cfg_attr(not(windows), allow(dead_code))]
+mod layout;
+mod presets;
 mod settings;
 mod view;
 
@@ -20,7 +26,20 @@ slint::include_modules!();
 
 struct App {
     ui: AppWindow,
+<<<<<<< Updated upstream
     bottom: BottomWindow,
+=======
+    /// Second window for split mode. Not created in kiosk mode, where the
+    /// display backend drives a single fullscreen output.
+    bottom: Option<BottomWindow>,
+    kiosk: bool,
+    /// Whether the HOME Menu (or a page) is showing over the capture.
+    menu_shown: Cell<bool>,
+    #[cfg(windows)]
+    hdr: RefCell<Option<hdr::HdrOutput>>,
+    #[cfg(windows)]
+    hdr_visible: Cell<bool>,
+>>>>>>> Stashed changes
     capture: CaptureManager,
     audio: RefCell<AudioOutput>,
     settings: RefCell<Settings>,
@@ -72,6 +91,10 @@ impl App {
         ui.set_split_windows(s.split_windows);
         ui.set_auto_connect(s.auto_connect);
         ui.set_theme(s.theme);
+        ui.set_filter_style(s.filter_style.clamp(0, 3));
+        ui.set_filter_strength(s.filter_strength.clamp(0.0, 100.0));
+        ui.set_hdr_output(s.hdr_output);
+        ui.set_hdr_brightness(s.hdr_brightness.clamp(100.0, 1000.0));
         ui.global::<Theme>().set_index(s.theme);
         let devices = self.audio_devices.borrow();
         let index = devices.iter().position(|d| *d == s.audio_device).unwrap_or(0);
@@ -105,6 +128,10 @@ impl App {
         s.split_windows = ui.get_split_windows();
         s.auto_connect = ui.get_auto_connect();
         s.theme = ui.get_theme();
+        s.filter_style = ui.get_filter_style();
+        s.filter_strength = ui.get_filter_strength();
+        s.hdr_output = ui.get_hdr_output();
+        s.hdr_brightness = ui.get_hdr_brightness();
         let index = ui.get_audio_device_index().max(0) as usize;
         s.audio_device = if index == 0 { String::new() } else { self.audio_devices.borrow().get(index).cloned().unwrap_or_default() };
     }
@@ -140,6 +167,8 @@ impl App {
         if s.split_windows != previous.split_windows {
             self.update_split_window();
         }
+        self.sync_bottom_window();
+        self.update_hdr();
         if s.auto_connect && !previous.auto_connect && self.connected.borrow().is_none() {
             self.capture.connect(None);
         }
@@ -152,6 +181,81 @@ impl App {
         if let Err(e) = result {
             self.toast(&format!("Audio: {e}"));
         }
+    }
+
+    /// Centre of the main window, in desktop pixels.
+    #[cfg(windows)]
+    fn window_centre(&self) -> (i32, i32) {
+        let window = self.ui.window();
+        let (pos, size) = (window.position(), window.size());
+        (pos.x + size.width as i32 / 2, pos.y + size.height as i32 / 2)
+    }
+
+    /// Text for the Video page about the display's HDR state.
+    fn refresh_hdr_status(&self) {
+        #[cfg(windows)]
+        {
+            let (x, y) = self.window_centre();
+            let status = match hdr::display_at(x, y) {
+                Some(d) if d.hdr_enabled => format!("HDR display, {:.0} nits peak. Shown when the menu is closed", d.max_nits),
+                Some(_) => "Turn on \"Use HDR\" in Windows display settings first".to_string(),
+                None => "No display information".to_string(),
+            };
+            self.ui.set_hdr_status(status.into());
+        }
+    }
+
+    /// Show, hide, create or drop the HDR window to match the settings and menu.
+    fn update_hdr(&self) {
+        #[cfg(windows)]
+        {
+            let s = self.settings.borrow();
+            if !s.hdr_output || self.kiosk {
+                self.hdr.replace(None);
+                self.hdr_visible.set(false);
+                return;
+            }
+            let mut hdr = self.hdr.borrow_mut();
+            let output = hdr.get_or_insert_with(|| {
+                hdr::HdrOutput::new(|event| {
+                    let _ = slint::invoke_from_event_loop(move || with_app(|app| app.handle_hdr_event(event)));
+                })
+            });
+            output.settings(&s);
+            let show = self.connected.borrow().is_some() && !self.menu_shown.get();
+            if show && !self.hdr_visible.get() {
+                let (x, y) = self.window_centre();
+                output.show(x, y);
+            } else if !show && self.hdr_visible.get() {
+                output.hide();
+            }
+            self.hdr_visible.set(show);
+        }
+    }
+
+    #[cfg(windows)]
+    fn handle_hdr_event(&self, event: hdr::HdrEvent) {
+        match event {
+            hdr::HdrEvent::OpenMenu => {
+                self.ui.set_menu_open(true);
+                let _ = self.ui.show();
+            }
+            hdr::HdrEvent::Closed => {
+                self.ui.set_hdr_output(false);
+                self.ui.invoke_settings_changed();
+            }
+            hdr::HdrEvent::Error(e) => self.toast(&e),
+        }
+    }
+
+    /// The split-screen window has its own copy of the display settings.
+    fn sync_bottom_window(&self) {
+        let Some(bottom) = &self.bottom else { return };
+        let s = self.settings.borrow();
+        bottom.set_integer_scaling(s.integer_scaling);
+        bottom.set_smoothing(s.smoothing);
+        bottom.set_filter_style(s.filter_style);
+        bottom.set_filter_strength(s.filter_strength);
     }
 
     fn update_split_window(&self) {
@@ -182,8 +286,14 @@ impl App {
         let crop_index = if frame.is_3ds { s.crop_3ds } else { s.crop_ds };
         let crop = view::crop_for(frame.is_3ds, s.game_crops, crop_index);
         let screens = view::render(frame, crop, s.top_rotation, s.bottom_rotation, s.mode_3d == 1);
-        let top = screens.top.unwrap_or_default();
-        let bottom = screens.bottom.unwrap_or_default();
+        let top = screens.top.as_ref().map(view::plane_to_image).unwrap_or_default();
+        let bottom = screens.bottom.as_ref().map(view::plane_to_image).unwrap_or_default();
+        #[cfg(windows)]
+        if self.hdr_visible.get() {
+            if let Some(output) = self.hdr.borrow().as_ref() {
+                output.frame(std::sync::Arc::new(hdr::HdrFrame { top: screens.top, bottom: screens.bottom }));
+            }
+        }
         self.ui.set_top_image(top);
         self.bottom.set_bottom_image(bottom.clone());
         self.ui.set_bottom_image(bottom);
@@ -233,6 +343,7 @@ impl App {
                 ui.set_page(SharedString::new());
                 self.connected.replace(Some(info));
                 self.refresh_crops();
+                self.update_hdr();
             }
             Event::Disconnected(reason) => {
                 let was_connected = self.connected.replace(None).is_some();
@@ -246,6 +357,7 @@ impl App {
                     ui.set_status_message("Disconnected".into());
                 }
                 self.clear_screens();
+                self.update_hdr();
             }
         }
     }
@@ -253,8 +365,18 @@ impl App {
 
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
+<<<<<<< Updated upstream
     let bottom = BottomWindow::new()?;
     let settings = Settings::load();
+=======
+    let bottom = if kiosk { None } else { Some(BottomWindow::new()?) };
+    let mut settings = Settings::load();
+    if kiosk {
+        settings.split_windows = false;
+    }
+    ui.set_kiosk(kiosk);
+    ui.set_hdr_supported(cfg!(windows) && !kiosk);
+>>>>>>> Stashed changes
 
     let audio = AudioOutput::new();
     let mut audio_devices = vec!["Default".to_string()];
@@ -271,7 +393,17 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let app = Rc::new(App {
         ui: ui.clone_strong(),
+<<<<<<< Updated upstream
         bottom: bottom.clone_strong(),
+=======
+        bottom: bottom.as_ref().map(|b| b.clone_strong()),
+        kiosk,
+        menu_shown: Cell::new(true),
+        #[cfg(windows)]
+        hdr: RefCell::new(None),
+        #[cfg(windows)]
+        hdr_visible: Cell::new(false),
+>>>>>>> Stashed changes
         capture,
         audio: RefCell::new(audio),
         settings: RefCell::new(settings),
@@ -284,7 +416,11 @@ fn main() -> Result<(), slint::PlatformError> {
     APP.with(|a| *a.borrow_mut() = Some(app.clone()));
 
     app.push_settings_to_ui();
+    app.sync_bottom_window();
     app.open_audio();
+    ui.set_presets(ModelRc::new(VecModel::from(
+        presets::PRESETS.iter().map(|p| DeviceItem { name: p.name.into(), detail: p.hint.into() }).collect::<Vec<_>>(),
+    )));
     ui.set_profile_exists(ModelRc::new(VecModel::from((0..NUM_PROFILES).map(Settings::profile_exists).collect::<Vec<_>>())));
 
     ui.on_settings_changed(|| {
@@ -303,6 +439,16 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     ui.on_disconnect(|| with_app(|app| app.capture.disconnect()));
+
+    ui.on_menu_visibility_changed(|shown| {
+        with_app(|app| {
+            app.menu_shown.set(shown);
+            if shown {
+                app.refresh_hdr_status();
+            }
+            app.update_hdr();
+        })
+    });
 
     ui.on_toggle_fullscreen(|| {
         with_app(|app| {
@@ -340,6 +486,16 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     ui.on_reset_settings(move || load_settings(Settings::default(), "Settings reset".into()));
+
+    ui.on_apply_preset(move |index| {
+        let Some(preset) = presets::PRESETS.get(index as usize) else { return };
+        let mut settings = None;
+        with_app(|app| settings = Some(app.settings.borrow().clone()));
+        if let Some(mut s) = settings {
+            preset.apply(&mut s);
+            load_settings(s, format!("{} applied", preset.name));
+        }
+    });
 
     ui.on_quit(|| {
         let _ = slint::quit_event_loop();

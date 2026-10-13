@@ -124,15 +124,14 @@ pub fn crop_for(is_3ds: bool, game_crops: bool, index: i32) -> &'static Crop {
     list.get(index.max(0) as usize).copied().unwrap_or(list[0])
 }
 
-/// Crop then rotate (clockwise, in degrees) into a Slint image.
-pub fn plane_to_image(plane: &Plane, crop: Rect, rotation: i32) -> Option<Image> {
+/// Crop then rotate (clockwise, in degrees).
+pub fn transform_plane(plane: &Plane, crop: Rect, rotation: i32) -> Option<Plane> {
     if crop.w == 0 || crop.h == 0 {
         return None;
     }
     let rot = rotation.rem_euclid(360) / 90;
     let (out_w, out_h) = if rot % 2 == 1 { (crop.h, crop.w) } else { (crop.w, crop.h) };
-    let mut buf = SharedPixelBuffer::<Rgb8Pixel>::new(out_w as u32, out_h as u32);
-    let dst = buf.make_mut_bytes();
+    let mut dst = vec![0u8; out_w * out_h * 3];
     for y in 0..crop.h {
         let src_row = ((crop.y + y) * plane.width + crop.x) * 3;
         for x in 0..crop.w {
@@ -147,7 +146,12 @@ pub fn plane_to_image(plane: &Plane, crop: Rect, rotation: i32) -> Option<Image>
             dst[d..d + 3].copy_from_slice(&plane.rgb[s..s + 3]);
         }
     }
-    Some(Image::from_rgb8(buf))
+    Some(Plane { width: out_w, height: out_h, rgb: dst })
+}
+
+pub fn plane_to_image(plane: &Plane) -> Image {
+    let buf = SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&plane.rgb, plane.width as u32, plane.height as u32);
+    Image::from_rgb8(buf)
 }
 
 /// Left and right eye next to each other, for side-by-side 3D output.
@@ -162,9 +166,10 @@ pub fn side_by_side(left: &Plane, right: &Plane) -> Plane {
     Plane { width: w, height: left.height, rgb }
 }
 
+/// The two screens as shown: cropped, rotated, 3D eyes combined.
 pub struct Screens {
-    pub top: Option<Image>,
-    pub bottom: Option<Image>,
+    pub top: Option<Plane>,
+    pub bottom: Option<Plane>,
 }
 
 pub fn render(frame: &Frame, crop: &Crop, top_rotation: i32, bottom_rotation: i32, side_by_side_3d: bool) -> Screens {
@@ -172,11 +177,11 @@ pub fn render(frame: &Frame, crop: &Crop, top_rotation: i32, bottom_rotation: i3
         Some(right) if side_by_side_3d && crop.top.w > 0 => {
             let stitched = side_by_side(&crop_plane(&frame.top, crop.top), &crop_plane(right, crop.top));
             let full = r(0, 0, stitched.width, stitched.height);
-            plane_to_image(&stitched, full, top_rotation)
+            transform_plane(&stitched, full, top_rotation)
         }
-        _ => plane_to_image(&frame.top, crop.top, top_rotation),
+        _ => transform_plane(&frame.top, crop.top, top_rotation),
     };
-    Screens { top, bottom: plane_to_image(&frame.bottom, crop.bottom, bottom_rotation) }
+    Screens { top, bottom: transform_plane(&frame.bottom, crop.bottom, bottom_rotation) }
 }
 
 fn crop_plane(plane: &Plane, crop: Rect) -> Plane {

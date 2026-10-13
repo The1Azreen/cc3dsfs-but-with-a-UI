@@ -1,0 +1,73 @@
+// Screen filters drawn over a captured screen and aligned to its source
+// pixels, so they line up at any size, position, rotation or crop.
+//
+// Each axis darkens towards the edges of every source pixel; where a column
+// and a row overlap the darkening multiplies, which gives the grid. This
+// matches how the LCD grid in Game Sack's 3DS footage (and the Morph 4K's
+// PSP / Vita masks) behaves: the same in red, green and blue.
+
+export global FilterStyles {
+    out property <[string]> names: ["Off", "LCD grid", "Fine grid", "Scanlines"];
+}
+
+export component PixelFilter inherits Rectangle {
+    // Source pixels shown in this rectangle.
+    in property <int> columns;
+    in property <int> rows;
+    // 0 off, 1 LCD grid (Game Sack 3DS), 2 fine grid (PSP / Vita), 3 scanlines.
+    in property <int> filter-style;
+    // 0 to 1.
+    in property <float> strength;
+
+    property <length> cell-w: root.width / max(1, root.columns);
+    property <length> cell-h: root.height / max(1, root.rows);
+    // Below 3 screen pixels per source pixel a grid only produces moiré.
+    property <bool> active: root.filter-style != 0 && root.strength > 0
+        && root.columns > 0 && root.rows > 0
+        && min(root.cell-w, root.cell-h) >= 3phx;
+    // Darkness at a pixel edge, per axis.
+    property <float> edge: root.strength * 0.6;
+    property <color> c100: #000000.with-alpha(root.edge);
+    property <color> c79: #000000.with-alpha(root.edge * 0.79);
+    property <color> c35: #000000.with-alpha(root.edge * 0.35);
+    property <color> clear: #00000000;
+
+    clip: true;
+
+    // Soft cosine profile, measured from Game Sack's 4K footage.
+    if root.active && root.filter-style == 1: Rectangle {
+        for i in root.columns: Rectangle {
+            x: i * root.cell-w;
+            width: root.cell-w;
+            background: @linear-gradient(90deg, root.c100 0%, root.c79 15%, root.c35 30%, root.clear 50%, root.c35 70%, root.c79 85%, root.c100 100%);
+        }
+        for j in root.rows: Rectangle {
+            y: j * root.cell-h;
+            height: root.cell-h;
+            background: @linear-gradient(180deg, root.c100 0%, root.c79 15%, root.c35 30%, root.clear 50%, root.c35 70%, root.c79 85%, root.c100 100%);
+        }
+    }
+
+    // Thin hard lines between pixels.
+    if root.active && root.filter-style == 2: Rectangle {
+        for i in root.columns: Rectangle {
+            x: i * root.cell-w;
+            width: root.cell-w;
+            background: @linear-gradient(90deg, root.c100 0%, root.c100 10%, root.clear 10%, root.clear 90%, root.c100 90%, root.c100 100%);
+        }
+        for j in root.rows: Rectangle {
+            y: j * root.cell-h;
+            height: root.cell-h;
+            background: @linear-gradient(180deg, root.c100 0%, root.c100 10%, root.clear 10%, root.clear 90%, root.c100 90%, root.c100 100%);
+        }
+    }
+
+    // Rows only, with the soft profile.
+    if root.active && root.filter-style == 3: Rectangle {
+        for j in root.rows: Rectangle {
+            y: j * root.cell-h;
+            height: root.cell-h;
+            background: @linear-gradient(180deg, root.c100 0%, root.c79 15%, root.c35 30%, root.clear 50%, root.c35 70%, root.c79 85%, root.c100 100%);
+        }
+    }
+}

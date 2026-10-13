@@ -1,4 +1,5 @@
 import { AboutSlint } from "std-widgets.slint";
+import { PixelFilter, FilterStyles } from "filter.slint";
 import { Theme, Stripes, GlossBar, Icon, Icons, Tile, Pill, Row, StepperRow, ToggleRow, SliderRow } from "theme.slint";
 
 export { Theme }
@@ -21,6 +22,8 @@ component Screens inherits Rectangle {
     in property <float> separator: 0;
     in property <bool> integer-scaling;
     in property <bool> smoothing;
+    in property <int> filter-style;
+    in property <float> filter-strength;
 
     property <bool> has-top: show-top && top-image.width > 0;
     property <bool> has-bottom: show-bottom && bottom-image.width > 0;
@@ -40,23 +43,53 @@ component Screens inherits Rectangle {
 
     background: #000000;
 
+    // Screen rectangles, shared by each image and its filter.
+    property <length> top-x: root.ox + (root.vertical ? (root.nat-w - root.tw) * root.offset : (root.top-first ? 0 : root.bw + root.sep)) * root.scale * 1phx;
+    property <length> top-y: root.oy + (root.vertical ? (root.top-first ? 0 : root.bh + root.sep) : (root.nat-h - root.th) * root.offset) * root.scale * 1phx;
+    property <length> top-w: root.tw * root.scale * 1phx;
+    property <length> top-h: root.th * root.scale * 1phx;
+    property <length> bot-x: root.ox + (root.vertical ? (root.nat-w - root.bw) * root.offset : (root.top-first ? root.tw + root.sep : 0)) * root.scale * 1phx;
+    property <length> bot-y: root.oy + (root.vertical ? (root.top-first ? root.th + root.sep : 0) : (root.nat-h - root.bh) * root.offset) * root.scale * 1phx;
+    property <length> bot-w: root.bw * root.scale * 1phx;
+    property <length> bot-h: root.bh * root.scale * 1phx;
+
     if has-top: Image {
         source: root.top-image;
         image-fit: fill;
         image-rendering: root.smoothing ? ImageRendering.smooth : ImageRendering.pixelated;
-        width: root.tw * root.scale * 1phx;
-        height: root.th * root.scale * 1phx;
-        x: root.ox + (root.vertical ? (root.nat-w - root.tw) * root.offset : (root.top-first ? 0 : root.bw + root.sep)) * root.scale * 1phx;
-        y: root.oy + (root.vertical ? (root.top-first ? 0 : root.bh + root.sep) : (root.nat-h - root.th) * root.offset) * root.scale * 1phx;
+        x: root.top-x;
+        y: root.top-y;
+        width: root.top-w;
+        height: root.top-h;
+    }
+    if has-top: PixelFilter {
+        x: root.top-x;
+        y: root.top-y;
+        width: root.top-w;
+        height: root.top-h;
+        columns: root.top-image.width;
+        rows: root.top-image.height;
+        filter-style: root.filter-style;
+        strength: root.filter-strength;
     }
     if has-bottom: Image {
         source: root.bottom-image;
         image-fit: fill;
         image-rendering: root.smoothing ? ImageRendering.smooth : ImageRendering.pixelated;
-        width: root.bw * root.scale * 1phx;
-        height: root.bh * root.scale * 1phx;
-        x: root.ox + (root.vertical ? (root.nat-w - root.bw) * root.offset : (root.top-first ? root.tw + root.sep : 0)) * root.scale * 1phx;
-        y: root.oy + (root.vertical ? (root.top-first ? root.th + root.sep : 0) : (root.nat-h - root.bh) * root.offset) * root.scale * 1phx;
+        x: root.bot-x;
+        y: root.bot-y;
+        width: root.bot-w;
+        height: root.bot-h;
+    }
+    if has-bottom: PixelFilter {
+        x: root.bot-x;
+        y: root.bot-y;
+        width: root.bot-w;
+        height: root.bot-h;
+        columns: root.bottom-image.width;
+        rows: root.bottom-image.height;
+        filter-style: root.filter-style;
+        strength: root.filter-strength;
     }
 }
 
@@ -65,6 +98,8 @@ export component BottomWindow inherits Window {
     in property <image> bottom-image;
     in property <bool> integer-scaling;
     in property <bool> smoothing;
+    in property <int> filter-style;
+    in property <float> filter-strength;
     callback key(string);
     title: "cc3dsfs - Bottom Screen";
     preferred-width: 640px;
@@ -81,6 +116,8 @@ export component BottomWindow inherits Window {
             show-top: false;
             integer-scaling: root.integer-scaling;
             smoothing: root.smoothing;
+            filter-style: root.filter-style;
+            filter-strength: root.filter-strength / 100;
         }
     }
 }
@@ -178,14 +215,23 @@ export component AppWindow inherits Window {
     in-out property <bool> split-windows;
     in-out property <bool> auto-connect: true;
     in-out property <int> theme: 0;
+    in-out property <int> filter-style;
+    in-out property <float> filter-strength: 30;
+    in-out property <bool> hdr-output;
+    in-out property <float> hdr-brightness: 300;
+    in property <bool> hdr-supported;
+    in property <string> hdr-status;
 
     // --- UI state
     in-out property <bool> menu-open;
     in-out property <string> page: "";
     property <bool> show-menu: menu-open || !connected;
+    changed show-menu => {
+        root.menu-visibility-changed(root.show-menu);
+    }
     property <bool> show-home-hint;
     // Pages that change what the screens look like are shown next to the live capture.
-    property <bool> live-preview: connected && (page == "layout" || page == "video" || page == "3d");
+    property <bool> live-preview: connected && (page == "layout" || page == "video" || page == "3d" || page == "presets");
     property <bool> panel-side: root.width >= 760px;
     property <length> panel-w: panel-side ? min(460px, root.width * 0.45) : root.width;
     property <length> panel-h: panel-side ? root.height : root.height * 0.55;
@@ -197,6 +243,9 @@ export component AppWindow inherits Window {
     callback save-profile(int);
     callback load-profile(int);
     callback reset-settings();
+    callback apply-preset(int);
+    callback menu-visibility-changed(bool);
+    in property <[DeviceItem]> presets;
     callback quit();
 
     out property <[string]> layout-names: ["Top above bottom", "Bottom above top", "Side by side", "Side by side (bottom left)", "Top screen only", "Bottom screen only"];
@@ -259,6 +308,8 @@ export component AppWindow inherits Window {
             separator: root.separator;
             integer-scaling: root.integer-scaling;
             smoothing: root.smoothing;
+            filter-style: root.filter-style;
+            filter-strength: root.filter-strength / 100;
         }
 
         // Right click toggles the HOME Menu; double click toggles fullscreen.
@@ -392,7 +443,7 @@ export component AppWindow inherits Window {
                     Rectangle {
                         property <int> per-row: max(1, Math.floor((root.width - 32px) / 116px));
                         width: per-row * 116px;
-                        height: Math.ceil(9 / per-row) * 140px;
+                        height: Math.ceil(10 / per-row) * 140px;
                         for tile[i] in [
                             { label: "Connection", glyph: Icons.connect, page: "connection" },
                             { label: "Layout", glyph: Icons.layout, page: "layout" },
@@ -402,7 +453,12 @@ export component AppWindow inherits Window {
                             { label: "Profiles", glyph: Icons.profiles, page: "profiles" },
                             { label: "Theme", glyph: Icons.theme, page: "theme" },
                             { label: "Status", glyph: Icons.status, page: "status" },
+<<<<<<< Updated upstream
                             { label: "Fullscreen", glyph: Icons.fullscreen, page: "!fullscreen" },
+=======
+                            { label: "Presets", glyph: Icons.presets, page: "presets" },
+                            { label: root.kiosk ? "Power" : "Fullscreen", glyph: root.kiosk ? Icons.power : Icons.fullscreen, page: root.kiosk ? "power" : "!fullscreen" },
+>>>>>>> Stashed changes
                         ]: Tile {
                             x: Math.mod(i, parent.per-row) * 116px + 4px;
                             y: Math.floor(i / parent.per-row) * 140px;
@@ -504,6 +560,23 @@ export component AppWindow inherits Window {
                     }
                 }
 
+                if root.page == "presets": Page {
+                    title: "Presets";
+                    back => { root.page = ""; }
+                    for preset[i] in root.presets: Row {
+                        label: preset.name;
+                        hint: preset.detail;
+                        alt: Math.mod(i, 2) == 1;
+                        Pill {
+                            x: parent.width - self.width - 14px;
+                            y: (parent.height - self.height) / 2;
+                            text: "Apply";
+                            primary: true;
+                            clicked => { root.apply-preset(i); }
+                        }
+                    }
+                }
+
                 if root.page == "layout": Page {
                     title: "Layout";
                     back => { root.page = ""; }
@@ -587,6 +660,40 @@ export component AppWindow inherits Window {
                         alt: true;
                         checked <=> root.smoothing;
                         toggled => { root.changed(); }
+                    }
+                    StepperRow {
+                        label: "Screen filter";
+                        hint: "Shown when each 3DS pixel is at least 3 screen pixels";
+                        value: FilterStyles.names[root.filter-style];
+                        prev => { root.filter-style = root.cycle(root.filter-style, 4, -1); root.changed(); }
+                        next => { root.filter-style = root.cycle(root.filter-style, 4, 1); root.changed(); }
+                    }
+                    SliderRow {
+                        label: "Filter strength";
+                        alt: true;
+                        minimum: 0;
+                        maximum: 100;
+                        step: 5;
+                        suffix: "%";
+                        value <=> root.filter-strength;
+                        changed => { root.changed(); }
+                    }
+                    if root.hdr-supported: ToggleRow {
+                        label: "HDR output";
+                        hint: root.hdr-status;
+                        checked <=> root.hdr-output;
+                        toggled => { root.changed(); }
+                    }
+                    if root.hdr-supported: SliderRow {
+                        label: "HDR brightness";
+                        hint: "White level; raised further to make up for the filter";
+                        alt: true;
+                        minimum: 100;
+                        maximum: 1000;
+                        step: 25;
+                        suffix: " nits";
+                        value <=> root.hdr-brightness;
+                        changed => { root.changed(); }
                     }
                     StepperRow {
                         label: "Top screen rotation";
