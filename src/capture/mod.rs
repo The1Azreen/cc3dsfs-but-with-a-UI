@@ -47,9 +47,12 @@ impl BoardKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Driver {
+    /// FTDI's D3XX driver (Windows only).
+    #[cfg_attr(not(windows), allow(dead_code))]
     FtdiD3xx,
     FtdiD2xx,
-    WinUsb,
+    /// Direct USB access: WinUSB on Windows, usbfs on Linux.
+    Usb,
 }
 
 impl Driver {
@@ -57,7 +60,8 @@ impl Driver {
         match self {
             Driver::FtdiD3xx => "FTDI D3XX",
             Driver::FtdiD2xx => "FTDI D2XX",
-            Driver::WinUsb => "WinUSB",
+            Driver::Usb if cfg!(windows) => "WinUSB",
+            Driver::Usb => "USB",
         }
     }
 }
@@ -76,6 +80,16 @@ pub struct DeviceInfo {
 impl DeviceInfo {
     pub fn display_name(&self) -> String {
         format!("{} · {}", self.board.label(), self.serial)
+    }
+}
+
+/// Claim a USB interface, detaching any kernel driver first on Linux.
+fn claim_interface(device: &nusb::Device, interface: u8) -> Result<nusb::Interface, nusb::Error> {
+    use nusb::MaybeFuture;
+    if cfg!(target_os = "linux") {
+        device.detach_and_claim_interface(interface).wait()
+    } else {
+        device.claim_interface(interface).wait()
     }
 }
 

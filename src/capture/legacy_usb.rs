@@ -1,4 +1,4 @@
-//! Older Loopy 3DS and DS boards (Cypress based), via WinUSB.
+//! Older Loopy 3DS and DS boards (Cypress based), via WinUSB or usbfs.
 //! Port of `usb_ds_3ds_capture.cpp`.
 
 use std::time::Duration;
@@ -84,7 +84,7 @@ pub fn list_devices() -> Vec<DeviceInfo> {
         .into_iter()
         .map(|(dev, desc, serial)| DeviceInfo {
             board: desc.board,
-            driver: Driver::WinUsb,
+            driver: Driver::Usb,
             serial,
             superspeed: matches!(dev.speed(), Some(nusb::Speed::Super | nusb::Speed::SuperPlus)),
             firmware_id: 0,
@@ -97,8 +97,8 @@ pub fn open(info: &DeviceInfo) -> Result<Box<dyn Session>, String> {
         .into_iter()
         .find(|(_, desc, serial)| desc.board == info.board && *serial == info.serial)
         .ok_or("Device not found")?;
-    let device = dev.open().wait().map_err(|e| format!("Open failed ({e}). Is the WinUSB driver installed?"))?;
-    let interface = device.claim_interface(CAPTURE_INTERFACE).wait().map_err(|e| format!("Interface claim failed ({e})"))?;
+    let device = dev.open().wait().map_err(|e| format!("Open failed ({e}). Is the WinUSB driver installed (Windows) or the udev rule (Linux)?"))?;
+    let interface = super::claim_interface(&device, CAPTURE_INTERFACE).map_err(|e| format!("Interface claim failed ({e})"))?;
     let ep_in = interface.endpoint::<Bulk, In>(EP2_IN).map_err(|e| format!("Endpoint open failed ({e})"))?;
     let session = LegacySession { interface, ep_in, desc };
     if desc.board == BoardKind::Old3ds {

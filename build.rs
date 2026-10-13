@@ -11,6 +11,10 @@ const DLLS: &[(&str, &str, &str)] = &[
 fn main() {
     slint_build::compile("ui/app.slint").expect("Slint build failed");
 
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+
     // OUT_DIR is target/<profile>/build/<pkg>/out; the exe lives in target/<profile>.
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let exe_dir = out_dir.ancestors().nth(3).expect("unexpected OUT_DIR layout").to_path_buf();

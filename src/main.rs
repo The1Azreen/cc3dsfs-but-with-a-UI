@@ -20,7 +20,10 @@ slint::include_modules!();
 
 struct App {
     ui: AppWindow,
-    bottom: BottomWindow,
+    /// Second window for split mode. Not created in kiosk mode, where the
+    /// display backend drives a single fullscreen output.
+    bottom: Option<BottomWindow>,
+    kiosk: bool,
     capture: CaptureManager,
     audio: RefCell<AudioOutput>,
     settings: RefCell<Settings>,
@@ -155,8 +158,9 @@ impl App {
     }
 
     fn update_split_window(&self) {
+        let Some(bottom) = &self.bottom else { return };
         let split = self.settings.borrow().split_windows;
-        let result = if split { self.bottom.show() } else { self.bottom.hide() };
+        let result = if split { bottom.show() } else { bottom.hide() };
         if let Err(e) = result {
             self.toast(&format!("Window error: {e}"));
         }
@@ -185,7 +189,9 @@ impl App {
         let top = screens.top.unwrap_or_default();
         let bottom = screens.bottom.unwrap_or_default();
         self.ui.set_top_image(top);
-        self.bottom.set_bottom_image(bottom.clone());
+        if let Some(window) = &self.bottom {
+            window.set_bottom_image(bottom.clone());
+        }
         self.ui.set_bottom_image(bottom);
     }
 
@@ -193,7 +199,9 @@ impl App {
         self.last_frame.replace(None);
         self.ui.set_top_image(Image::default());
         self.ui.set_bottom_image(Image::default());
-        self.bottom.set_bottom_image(Image::default());
+        if let Some(window) = &self.bottom {
+            window.set_bottom_image(Image::default());
+        }
     }
 
     fn handle_event(&self, event: Event) {
@@ -251,10 +259,28 @@ impl App {
     }
 }
 
+/// Runs a power command in kiosk mode. The kiosk installer grants the
+/// service user passwordless sudo for exactly these commands.
+fn power_command(action: &str) -> Result<(), String> {
+    let args: &[&str] = match action {
+        "poweroff" => &["-n", "/usr/bin/systemctl", "poweroff"],
+        "reboot" => &["-n", "/usr/bin/systemctl", "reboot"],
+        _ => return Err(format!("unknown power action {action}")),
+    };
+    let status = std::process::Command::new("sudo").args(args).status().map_err(|e| e.to_string())?;
+    if status.success() { Ok(()) } else { Err(format!("sudo exited with {status}")) }
+}
+
 fn main() -> Result<(), slint::PlatformError> {
+    // Kiosk mode: fullscreen on a single output, power controls instead of Quit.
+    let kiosk = std::env::args().any(|a| a == "--kiosk");
     let ui = AppWindow::new()?;
-    let bottom = BottomWindow::new()?;
-    let settings = Settings::load();
+    let bottom = if kiosk { None } else { Some(BottomWindow::new()?) };
+    let mut settings = Settings::load();
+    if kiosk {
+        settings.split_windows = false;
+    }
+    ui.set_kiosk(kiosk);
 
     let audio = AudioOutput::new();
     let mut audio_devices = vec!["Default".to_string()];
@@ -271,7 +297,8 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let app = Rc::new(App {
         ui: ui.clone_strong(),
-        bottom: bottom.clone_strong(),
+        bottom: bottom.as_ref().map(|b| b.clone_strong()),
+        kiosk,
         capture,
         audio: RefCell::new(audio),
         settings: RefCell::new(settings),
@@ -306,6 +333,9 @@ fn main() -> Result<(), slint::PlatformError> {
 
     ui.on_toggle_fullscreen(|| {
         with_app(|app| {
+            if app.kiosk {
+                return;
+            }
             let window = app.ui.window();
             let fullscreen = !window.is_fullscreen();
             window.set_fullscreen(fullscreen);
@@ -345,32 +375,44 @@ fn main() -> Result<(), slint::PlatformError> {
         let _ = slint::quit_event_loop();
     });
 
+    ui.on_power(|action| {
+        with_app(|app| {
+            if let Err(e) = power_command(action.as_str()) {
+                app.toast(&format!("Could not {action}: {e}"));
+            }
+        })
+    });
+
     ui.window().on_close_requested(|| {
         let _ = slint::quit_event_loop();
         CloseRequestResponse::HideWindow
     });
 
-    bottom.window().on_close_requested(|| {
-        with_app(|app| {
-            app.ui.set_split_windows(false);
-            app.ui.invoke_settings_changed();
+    if let Some(bottom) = &bottom {
+        bottom.window().on_close_requested(|| {
+            with_app(|app| {
+                app.ui.set_split_windows(false);
+                app.ui.invoke_settings_changed();
+            });
+            CloseRequestResponse::HideWindow
         });
-        CloseRequestResponse::HideWindow
-    });
 
-    let f11 = SharedString::from(slint::platform::Key::F11);
-    let escape = SharedString::from(slint::platform::Key::Escape);
-    bottom.on_key(move |text| {
-        with_app(|app| {
-            if text == f11 {
-                let window = app.bottom.window();
-                window.set_fullscreen(!window.is_fullscreen());
-            } else if text == escape {
-                app.ui.set_menu_open(true);
-                let _ = app.ui.show();
-            }
-        })
-    });
+        let f11 = SharedString::from(slint::platform::Key::F11);
+        let escape = SharedString::from(slint::platform::Key::Escape);
+        bottom.on_key(move |text| {
+            with_app(|app| {
+                if text == f11 {
+                    if let Some(bottom) = &app.bottom {
+                        let window = bottom.window();
+                        window.set_fullscreen(!window.is_fullscreen());
+                    }
+                } else if text == escape {
+                    app.ui.set_menu_open(true);
+                    let _ = app.ui.show();
+                }
+            })
+        });
+    }
 
     // Clock and frame-rate counter.
     let clock_timer = slint::Timer::default();
@@ -385,15 +427,17 @@ fn main() -> Result<(), slint::PlatformError> {
 
     ui.show()?;
     app.update_split_window();
-    if app.settings.borrow().fullscreen {
+    if kiosk || app.settings.borrow().fullscreen {
         ui.window().set_fullscreen(true);
         ui.set_fullscreen(true);
     }
     slint::run_event_loop()?;
 
-    // Remember fullscreen state for next launch.
+    // Remember fullscreen state for next launch (kiosk is always fullscreen).
     with_app(|app| {
-        app.settings.borrow_mut().fullscreen = app.ui.window().is_fullscreen();
+        if !app.kiosk {
+            app.settings.borrow_mut().fullscreen = app.ui.window().is_fullscreen();
+        }
         let _ = app.settings.borrow().save();
     });
     APP.with(|a| a.borrow_mut().take());

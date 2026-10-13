@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, pi-kiosk]
   pull_request:
 
 jobs:
@@ -26,3 +26,33 @@ jobs:
       with:
         name: cc3dsfs_windows_x64
         path: cc3dsfs
+
+  # Raspberry Pi (64-bit Raspberry Pi OS). Built on Debian Bookworm so the
+  # binary also runs on older Pi OS releases (glibc 2.36).
+  raspberry-pi:
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    steps:
+    - name: Install build dependencies
+      run: |
+        apt-get update
+        apt-get install -y --no-install-recommends build-essential pkg-config curl ca-certificates git \
+          libasound2-dev libudev-dev libinput-dev libxkbcommon-dev libgbm-dev libdrm-dev libfontconfig1-dev
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+    - name: Test
+      run: cargo test
+    - name: Build release
+      run: cargo build --release
+    - name: Package
+      run: |
+        mkdir -p cc3dsfs-pi
+        cp -r pi cc3dsfs-pi/
+        cp target/release/cc3dsfs cc3dsfs-pi/pi/
+        cp -r LICENSE README.md "other licenses" cc3dsfs-pi/
+        tar -czf cc3dsfs-pi-arm64.tar.gz cc3dsfs-pi
+    - uses: actions/upload-artifact@v4
+      with:
+        name: cc3dsfs_raspberry_pi_arm64
+        path: cc3dsfs-pi-arm64.tar.gz

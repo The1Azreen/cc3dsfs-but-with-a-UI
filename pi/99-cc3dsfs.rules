@@ -1,0 +1,13 @@
+# Lets the cc3dsfs kiosk user (group plugdev) open Loopy capture boards.
+# Installed to /etc/udev/rules.d/99-cc3dsfs.rules.
+
+# Older 3DS and DS boards.
+SUBSYSTEM=="usb", ATTR{idVendor}=="16d0", ATTR{idProduct}=="06a3|0647", GROUP="plugdev", MODE="0660"
+
+# New 3DS XL boards (FT601).
+SUBSYSTEM=="usb", ATTR{idVendor}=="0403", ATTR{idProduct}=="601e|601f|602a|602b|602c|602d|602f", GROUP="plugdev", MODE="0660"
+
+# 2024 DS boards (FT232H). FTDI's D2XX library needs the kernel's serial
+# driver off the board, so unbind it; other FTDI serial adapters are untouched.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0403", ATTR{idProduct}=="6014", GROUP="plugdev", MODE="0660"
+ACTION=="bind", SUBSYSTEM=="usb", DRIVER=="ftdi_sio", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6014", ATTRS{product}=="NDS.*", RUN+="/bin/sh -c 'echo -n %k > /sys/bus/usb/drivers/ftdi_sio/unbind'"

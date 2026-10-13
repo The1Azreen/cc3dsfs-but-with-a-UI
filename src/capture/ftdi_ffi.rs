@@ -1,5 +1,5 @@
-//! Runtime bindings to FTDI's D3XX (FT601, New 3DS XL boards) and D2XX
-//! (FT232H, new DS boards) Windows drivers.
+//! Runtime bindings to FTDI's D3XX (FT601, New 3DS XL boards, Windows only)
+//! and D2XX (FT232H, new DS boards; `libftd2xx.so` on Linux) drivers.
 //!
 //! The DLLs are loaded lazily so the application still starts (and the
 //! WinUSB backends keep working) when a driver is not installed.
@@ -13,10 +13,12 @@ pub type FtHandle = *mut c_void;
 pub type FtStatus = u32;
 
 pub const FT_OK: FtStatus = 0;
+#[cfg(windows)]
 pub const FT_IO_PENDING: FtStatus = 24;
 pub const FT_OPEN_BY_SERIAL_NUMBER: u32 = 1;
 
 pub const FT_FLAGS_HISPEED: u32 = 2;
+#[cfg(windows)]
 pub const FT_FLAGS_SUPERSPEED: u32 = 4;
 
 pub const FT_DEVICE_232H: u32 = 8;
@@ -28,6 +30,7 @@ pub const FT_BITMODE_MPSSE: u8 = 0x02;
 pub const FT_BITMODE_SYNC_FIFO: u8 = 0x40;
 
 /// Win32 `OVERLAPPED`. Initialised by `FT_InitializeOverlapped`.
+#[cfg(windows)]
 #[repr(C)]
 pub struct Overlapped {
     internal: usize,
@@ -37,6 +40,7 @@ pub struct Overlapped {
     h_event: *mut c_void,
 }
 
+#[cfg(windows)]
 impl Default for Overlapped {
     fn default() -> Self {
         Self { internal: 0, internal_high: 0, offset: 0, offset_high: 0, h_event: std::ptr::null_mut() }
@@ -89,6 +93,7 @@ fn load_library(names: &[&str]) -> Option<Library> {
     None
 }
 
+#[cfg(windows)]
 ftdi_lib!(D3xx, &["FTD3XX.dll"], {
     FT_CreateDeviceInfoList: fn(*mut u32);
     FT_GetDeviceInfoDetail: fn(u32, *mut u32, *mut u32, *mut u32, *mut u32, *mut c_void, *mut c_void, *mut FtHandle);
@@ -106,7 +111,12 @@ ftdi_lib!(D3xx, &["FTD3XX.dll"], {
     FT_GetPipeTimeout: fn(FtHandle, u8, *mut u32);
 });
 
-ftdi_lib!(D2xx, &["ftd2xx.dll", "ftd2xx64.dll"], {
+#[cfg(windows)]
+const D2XX_NAMES: &[&str] = &["ftd2xx.dll", "ftd2xx64.dll"];
+#[cfg(not(windows))]
+const D2XX_NAMES: &[&str] = &["libftd2xx.so", "/usr/local/lib/libftd2xx.so"];
+
+ftdi_lib!(D2xx, D2XX_NAMES, {
     FT_CreateDeviceInfoList: fn(*mut u32);
     FT_GetDeviceInfoDetail: fn(u32, *mut u32, *mut u32, *mut u32, *mut u32, *mut c_void, *mut c_void, *mut FtHandle);
     FT_OpenEx: fn(*mut c_void, u32, *mut FtHandle);

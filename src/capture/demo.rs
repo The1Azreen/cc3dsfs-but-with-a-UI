@@ -9,7 +9,7 @@ use super::{BoardKind, DeviceInfo, Driver, Output, Session};
 pub const SERIAL: &str = "DEMO";
 
 pub fn info() -> DeviceInfo {
-    DeviceInfo { board: BoardKind::New3dsXl, driver: Driver::WinUsb, serial: SERIAL.into(), superspeed: false, firmware_id: 0 }
+    DeviceInfo { board: BoardKind::New3dsXl, driver: Driver::Usb, serial: SERIAL.into(), superspeed: false, firmware_id: 0 }
 }
 
 pub struct DemoSession;
