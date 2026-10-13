@@ -4,9 +4,13 @@ A Windows viewer for [Loopy's](https://3dscapture.com/) 3DS and DS capture board
 
 This is a Rust rewrite of [cc3dsfs](https://github.com/Lorenzooone/cc3dsfs) by Lorenzooone. The capture code is a port of the original's Loopy device code. The interface is built with [Slint](https://slint.dev).
 
-| Capturing a New 3DS XL (integer scaling) | HOME Menu (Esc or right click) |
+| Capturing a New 3DS XL (integer scaling) | Capturing a DS (older board) |
 |---|---|
-| ![Both 3DS screens captured at 3x integer scale](docs/capture.png) | ![The 3DS-styled HOME Menu shown while capturing](docs/home-menu.png) |
+| ![Both 3DS screens captured at 3x integer scale](docs/capture.png) | ![Both DS screens captured from an older Loopy DS board](docs/ds-capture.png) |
+
+| HOME Menu (Esc or right click) |
+|---|
+| ![The 3DS-styled HOME Menu shown while capturing](docs/home-menu.png) |
 
 ## Supported boards
 
@@ -94,9 +98,19 @@ Compared to the original cc3dsfs, this version doesn't have:
 - WinUSB support for the 2024 DS boards.
 - Shaders, colour correction, BFI, PAR and the output framerate settings.
 
+## Acknowledgements
+
+This project is based on [cc3dsfs](https://github.com/Lorenzooone/cc3dsfs), created by **[Lorenzooone](https://github.com/Lorenzooone)**. It is a derivative work of cc3dsfs, which is licensed under the MIT License.
+
+- The capture code is a port of cc3dsfs's Loopy device code. That covers the USB protocols for the New 3DS XL, older 3DS/DS and 2024 DS boards, plus frame decoding and audio handling.
+- The crop presets and the screen layout behaviour come from cc3dsfs.
+- Lorenzooone's original copyright notice and the MIT permission notice are kept, unmodified, in [LICENSE](LICENSE), as the MIT License requires.
+
+Thanks also to **Loopy** ([3dscapture.com](https://3dscapture.com/)), whose capture boards this supports. The board communication code is based on Loopy's sample code, and Loopy provided the DS FPGA bitstreams in `firmware/`.
+
 ## Licenses
 
-- MIT, see [LICENSE](LICENSE). The original cc3dsfs is © Lorenzooone.
+- MIT, see [LICENSE](LICENSE). The original cc3dsfs is Copyright (c) 2024 Lorenzooone.
 - The DS FPGA bitstreams in `firmware/` were provided by Loopy; see [other licenses/bin_files.txt](other%20licenses/bin_files.txt).
 - The FTDI driver libraries are covered by [FTDI's licence](ftdi_lib_files/ftd2xx_ftd3xx_license.txt).
 - The UI uses Slint under its Royalty-free license.
