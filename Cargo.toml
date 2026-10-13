@@ -1,0 +1,25 @@
+[package]
+name = "cc3dsfs"
+version = "0.1.0"
+edition = "2024"
+description = "3DS/DS capture card viewer for Loopy capture boards, with a 3DS-styled UI"
+license = "MIT"
+build = "build.rs"
+
+[dependencies]
+slint = "1.18.1"
+nusb = "0.2.7"
+cpal = "0.18.2"
+libloading = "0.9.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+dirs = "7.0.0"
+chrono = { version = "0.4.42", default-features = false, features = ["clock"] }
+
+[build-dependencies]
+slint-build = "1.18.1"
+zip = { version = "9.0.2", default-features = false, features = ["deflate"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

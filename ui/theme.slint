@@ -1,0 +1,404 @@
+// Visual language inspired by the 3DS HOME Menu and System Settings:
+// pale striped backgrounds, glossy white tiles, rounded pills and a
+// console-colour accent. All shapes are drawn here; no Nintendo assets.
+
+export global Theme {
+    in-out property <int> index: 0;
+
+    out property <[string]> names: ["Aqua Blue", "Cosmo Black", "Flame Red", "Coral Pink", "Ice White", "Metallic Green", "Midnight Purple"];
+
+    out property <color> accent: index == 1 ? #3d4148
+        : index == 2 ? #e23a2e
+        : index == 3 ? #ef6f8f
+        : index == 4 ? #8fa3b3
+        : index == 5 ? #4caf50
+        : index == 6 ? #6c4bc6
+        : #12a5e2;
+    out property <color> accent-light: accent.brighter(0.55);
+    out property <color> accent-soft: accent.with-alpha(0.18);
+
+    out property <color> bg: #ebebeb;
+    out property <color> stripe: #e1e1e1;
+    out property <color> panel: #fbfbfb;
+    out property <color> panel-edge: #c9c9c9;
+    out property <color> row: #ffffff;
+    out property <color> row-alt: #f4f4f4;
+    out property <color> text: #3b3b3b;
+    out property <color> text-dim: #8a8a8a;
+    out property <color> bar-top: #fdfdfd;
+    out property <color> bar-bottom: #d6d6d6;
+    out property <color> shadow: #00000033;
+
+    out property <length> radius: 10px;
+    out property <length> font-small: 12px;
+    out property <length> font-body: 15px;
+    out property <length> font-title: 19px;
+}
+
+// Thin horizontal stripes like the default HOME Menu background.
+export component Stripes inherits Rectangle {
+    background: Theme.bg;
+    clip: true;
+    for i in 200: Rectangle {
+        y: i * 10px;
+        height: 4px;
+        width: parent.width;
+        background: Theme.stripe;
+    }
+}
+
+// Glossy gradient bar used for the top and bottom bars.
+export component GlossBar inherits Rectangle {
+    background: @linear-gradient(180deg, Theme.bar-top 0%, Theme.bar-bottom 100%);
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: #b5b5b5;
+    }
+}
+
+// A simple 24x24 stroked icon.
+export component Icon inherits Path {
+    in property <string> glyph;
+    in property <color> tint: Theme.text;
+    commands: glyph;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    stroke: tint;
+    stroke-width: 2px;
+    fill: transparent;
+    width: 30px;
+    height: 30px;
+}
+
+export global Icons {
+    out property <string> connect: "M9 2 L9 7 M15 2 L15 7 M6 7 L18 7 L18 11 A6 6 0 0 1 6 11 Z M12 17 L12 22";
+    out property <string> layout: "M3 2 L21 2 L21 11 L3 11 Z M6 13 L18 13 L18 22 L6 22 Z";
+    out property <string> video: "M6 1 L6 18 L23 18 M1 6 L18 6 L18 23";
+    out property <string> audio: "M3 9 L7 9 L12 5 L12 19 L7 15 L3 15 Z M15.5 9 A4 4 0 0 1 15.5 15 M18.5 6 A8 8 0 0 1 18.5 18";
+    out property <string> depth: "M2 8 L22 8 L22 15 L15 15 L13 12 L11 12 L9 15 L2 15 Z";
+    out property <string> profiles: "M4 3 L17 3 L20 6 L20 21 L4 21 Z M8 3 L8 8 L15 8 L15 3 M8 14 L16 14 L16 21 L8 21 Z";
+    out property <string> theme: "M12 3 A9 9 0 1 0 12 21 C14 21 14 19 13 18 C12 17 13 15 15 15 L17 15 A4 4 0 0 0 21 11 C21 6.5 17 3 12 3 Z M7.5 11 L7.6 11 M10 7 L10.1 7 M15 7 L15.1 7";
+    out property <string> status: "M12 2 A10 10 0 1 0 12 22 A10 10 0 1 0 12 2 Z M12 10.5 L12 17 M12 7 L12 7.5";
+    out property <string> fullscreen: "M3 9 L3 3 L9 3 M15 3 L21 3 L21 9 M21 15 L21 21 L15 21 M9 21 L3 21 L3 15";
+    out property <string> power: "M12 2 L12 11 M6.5 5.5 A8 8 0 1 0 17.5 5.5";
+    out property <string> play: "M7 4 L19 12 L7 20 Z";
+    out property <string> home: "M3 11 L12 3 L21 11 M6 9 L6 21 L18 21 L18 9";
+}
+
+// HOME-Menu style application tile.
+export component Tile inherits Rectangle {
+    in property <string> label;
+    in property <string> glyph;
+    in property <bool> active;
+    callback clicked;
+
+    width: 108px;
+    height: 128px;
+
+    tile := Rectangle {
+        y: 0;
+        width: 96px;
+        height: 96px;
+        x: (parent.width - self.width) / 2;
+        border-radius: 18px;
+        background: @linear-gradient(180deg, #ffffff 0%, touch.has-hover ? Theme.accent-light : #e9e9e9 100%);
+        border-width: touch.has-hover || root.active ? 3px : 1px;
+        border-color: touch.has-hover || root.active ? Theme.accent : Theme.panel-edge;
+        drop-shadow-blur: touch.pressed ? 2px : 6px;
+        drop-shadow-offset-y: touch.pressed ? 1px : 3px;
+        drop-shadow-color: Theme.shadow;
+        animate border-width, drop-shadow-blur { duration: 90ms; }
+
+        Icon {
+            glyph: root.glyph;
+            tint: touch.has-hover || root.active ? Theme.accent : Theme.text;
+            width: 44px;
+            height: 44px;
+        }
+    }
+
+    Text {
+        y: tile.height + 8px;
+        width: parent.width;
+        text: root.label;
+        horizontal-alignment: center;
+        font-size: Theme.font-small + 1px;
+        font-weight: 600;
+        color: Theme.text;
+    }
+
+    touch := TouchArea {
+        width: tile.width;
+        height: tile.height;
+        x: tile.x;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Rounded pill button, e.g. the "B Back" button of System Settings.
+export component Pill inherits Rectangle {
+    in property <string> text;
+    in property <string> badge;
+    // Optional icon path drawn in the badge circle instead of text.
+    in property <string> icon;
+    in property <bool> primary;
+    in property <bool> enabled: true;
+    callback clicked;
+
+    height: 38px;
+    width: max(96px, content.preferred-width);
+    border-radius: self.height / 2;
+    opacity: enabled ? 1 : 0.45;
+    background: primary
+        ? @linear-gradient(180deg, Theme.accent.brighter(0.25) 0%, Theme.accent 100%)
+        : @linear-gradient(180deg, #ffffff 0%, touch.has-hover && enabled ? Theme.accent-light : #e3e3e3 100%);
+    border-width: 1px;
+    border-color: primary ? Theme.accent.darker(0.2) : Theme.panel-edge;
+    drop-shadow-blur: 3px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: Theme.shadow;
+
+    content := HorizontalLayout {
+        padding-left: badge == "" && icon == "" ? 18px : 6px;
+        padding-right: 18px;
+        spacing: 8px;
+        alignment: center;
+        if badge != "" || icon != "": Rectangle {
+            width: 26px;
+            height: 26px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 13px;
+            background: primary ? #ffffff40 : Theme.text;
+            if root.icon == "": Text {
+                text: root.badge;
+                color: #ffffff;
+                font-size: 13px;
+                font-weight: 800;
+            }
+            if root.icon != "": Icon {
+                glyph: root.icon;
+                tint: #ffffff;
+                width: 16px;
+                height: 16px;
+            }
+        }
+        Text {
+            text: root.text;
+            vertical-alignment: center;
+            color: primary ? #ffffff : Theme.text;
+            font-size: Theme.font-body;
+            font-weight: 600;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Round arrow button used by steppers.
+component ArrowButton inherits Rectangle {
+    in property <bool> left;
+    callback clicked;
+    width: 34px;
+    height: 34px;
+    border-radius: 17px;
+    background: @linear-gradient(180deg, #ffffff 0%, touch.has-hover ? Theme.accent-light : #e5e5e5 100%);
+    border-width: 1px;
+    border-color: Theme.panel-edge;
+    Path {
+        commands: left ? "M15 5 L8 12 L15 19" : "M9 5 L16 12 L9 19";
+        viewbox-width: 24;
+        viewbox-height: 24;
+        width: 18px;
+        height: 18px;
+        stroke: Theme.accent;
+        stroke-width: 3px;
+        fill: transparent;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// One line in a settings list.
+export component Row inherits Rectangle {
+    in property <string> label;
+    in property <string> hint;
+    in property <bool> alt;
+    height: hint == "" ? 54px : 66px;
+    background: alt ? Theme.row-alt : Theme.row;
+
+    VerticalLayout {
+        x: 18px;
+        width: parent.width * 0.5;
+        alignment: center;
+        spacing: 2px;
+        Text {
+            text: root.label;
+            color: Theme.text;
+            font-size: Theme.font-body;
+            font-weight: 600;
+            overflow: elide;
+        }
+        if hint != "": Text {
+            text: root.hint;
+            color: Theme.text-dim;
+            font-size: Theme.font-small;
+            overflow: elide;
+        }
+    }
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: #e0e0e0;
+    }
+    @children
+}
+
+// "◀ value ▶" selector.
+export component StepperRow inherits Row {
+    in property <string> value;
+    callback prev;
+    callback next;
+    HorizontalLayout {
+        x: parent.width * 0.5;
+        width: parent.width * 0.5 - 14px;
+        alignment: end;
+        spacing: 10px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        ArrowButton {
+            left: true;
+            clicked => { root.prev(); }
+        }
+        Rectangle {
+            min-width: 150px;
+            Text {
+                text: root.value;
+                color: Theme.accent;
+                font-size: Theme.font-body;
+                font-weight: 700;
+                horizontal-alignment: center;
+                overflow: elide;
+                width: parent.width;
+            }
+        }
+        ArrowButton {
+            left: false;
+            clicked => { root.next(); }
+        }
+    }
+}
+
+// On/Off switch drawn like the 3DS pill toggles.
+export component ToggleRow inherits Row {
+    in-out property <bool> checked;
+    callback toggled;
+    Rectangle {
+        x: parent.width - self.width - 20px;
+        width: 104px;
+        height: 32px;
+        border-radius: 16px;
+        background: #dedede;
+        border-width: 1px;
+        border-color: Theme.panel-edge;
+        knob := Rectangle {
+            x: root.checked ? parent.width - self.width - 2px : 2px;
+            y: 2px;
+            width: 50px;
+            height: parent.height - 4px;
+            border-radius: self.height / 2;
+            background: root.checked ? @linear-gradient(180deg, Theme.accent.brighter(0.25) 0%, Theme.accent 100%) : @linear-gradient(180deg, #ffffff 0%, #ececec 100%);
+            drop-shadow-blur: 2px;
+            drop-shadow-color: Theme.shadow;
+            animate x { duration: 120ms; easing: ease-out; }
+            Text {
+                text: root.checked ? "On" : "Off";
+                color: root.checked ? #ffffff : Theme.text-dim;
+                font-weight: 700;
+                font-size: 13px;
+            }
+        }
+        TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                root.checked = !root.checked;
+                root.toggled();
+            }
+        }
+    }
+}
+
+// Horizontal slider with a value readout.
+export component SliderRow inherits Row {
+    in-out property <float> value;
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in property <float> step: 1;
+    in property <string> suffix;
+    callback changed;
+
+    property <length> track-x: root.width * 0.5;
+    property <length> track-w: root.width * 0.5 - 100px;
+
+    track := Rectangle {
+        x: root.track-x;
+        width: root.track-w;
+        height: 8px;
+        border-radius: 4px;
+        background: #d4d4d4;
+        Rectangle {
+            x: 0;
+            width: parent.width * (root.value - root.minimum) / (root.maximum - root.minimum);
+            height: parent.height;
+            border-radius: 4px;
+            background: Theme.accent;
+        }
+    }
+    Rectangle {
+        x: root.track-x + root.track-w * (root.value - root.minimum) / (root.maximum - root.minimum) - self.width / 2;
+        width: 22px;
+        height: 22px;
+        border-radius: 11px;
+        background: @linear-gradient(180deg, #ffffff 0%, #e2e2e2 100%);
+        border-width: 2px;
+        border-color: Theme.accent;
+        drop-shadow-blur: 3px;
+        drop-shadow-color: Theme.shadow;
+    }
+    Text {
+        x: root.track-x + root.track-w + 14px;
+        width: 70px;
+        text: (round(root.value * 100) / 100) + root.suffix;
+        color: Theme.accent;
+        font-weight: 700;
+        font-size: Theme.font-body;
+    }
+    TouchArea {
+        x: root.track-x - 10px;
+        width: root.track-w + 20px;
+        mouse-cursor: pointer;
+        function update(px: length) {
+            let t = max(0, min(1, (px - 10px) / root.track-w));
+            let raw = root.minimum + t * (root.maximum - root.minimum);
+            root.value = round(raw / root.step) * root.step;
+            root.changed();
+        }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                self.update(self.mouse-x);
+            }
+        }
+        moved => {
+            if (self.pressed) {
+                self.update(self.mouse-x);
+            }
+        }
+    }
+}

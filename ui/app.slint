@@ -1,0 +1,758 @@
+import { AboutSlint } from "std-widgets.slint";
+import { Theme, Stripes, GlossBar, Icon, Icons, Tile, Pill, Row, StepperRow, ToggleRow, SliderRow } from "theme.slint";
+
+export { Theme }
+
+export struct DeviceItem {
+    name: string,
+    detail: string,
+}
+
+// Fits one or two screens into an area, like the original layout code.
+component Screens inherits Rectangle {
+    in property <image> top-image;
+    in property <image> bottom-image;
+    in property <bool> show-top: true;
+    in property <bool> show-bottom: true;
+    // 0 top above bottom, 1 bottom above top, 2 side by side, 3 side by side (bottom first)
+    in property <int> arrangement;
+    in property <float> bottom-scale: 1.0;
+    in property <float> offset: 0.5;
+    in property <float> separator: 0;
+    in property <bool> integer-scaling;
+    in property <bool> smoothing;
+
+    property <bool> has-top: show-top && top-image.width > 0;
+    property <bool> has-bottom: show-bottom && bottom-image.width > 0;
+    property <float> tw: has-top ? top-image.width : 0;
+    property <float> th: has-top ? top-image.height : 0;
+    property <float> bw: has-bottom ? bottom-image.width * bottom-scale : 0;
+    property <float> bh: has-bottom ? bottom-image.height * bottom-scale : 0;
+    property <float> sep: has-top && has-bottom ? separator : 0;
+    property <bool> vertical: arrangement <= 1;
+    property <float> nat-w: max(1, vertical ? max(tw, bw) : tw + bw + sep);
+    property <float> nat-h: max(1, vertical ? th + bh + sep : max(th, bh));
+    property <float> fit: min(root.width / 1phx / nat-w, root.height / 1phx / nat-h);
+    property <float> scale: integer-scaling && fit >= 1 ? floor(fit) : fit;
+    property <length> ox: (root.width - nat-w * scale * 1phx) / 2;
+    property <length> oy: (root.height - nat-h * scale * 1phx) / 2;
+    property <bool> top-first: arrangement == 0 || arrangement == 2;
+
+    background: #000000;
+
+    if has-top: Image {
+        source: root.top-image;
+        image-fit: fill;
+        image-rendering: root.smoothing ? ImageRendering.smooth : ImageRendering.pixelated;
+        width: root.tw * root.scale * 1phx;
+        height: root.th * root.scale * 1phx;
+        x: root.ox + (root.vertical ? (root.nat-w - root.tw) * root.offset : (root.top-first ? 0 : root.bw + root.sep)) * root.scale * 1phx;
+        y: root.oy + (root.vertical ? (root.top-first ? 0 : root.bh + root.sep) : (root.nat-h - root.th) * root.offset) * root.scale * 1phx;
+    }
+    if has-bottom: Image {
+        source: root.bottom-image;
+        image-fit: fill;
+        image-rendering: root.smoothing ? ImageRendering.smooth : ImageRendering.pixelated;
+        width: root.bw * root.scale * 1phx;
+        height: root.bh * root.scale * 1phx;
+        x: root.ox + (root.vertical ? (root.nat-w - root.bw) * root.offset : (root.top-first ? root.tw + root.sep : 0)) * root.scale * 1phx;
+        y: root.oy + (root.vertical ? (root.top-first ? root.th + root.sep : 0) : (root.nat-h - root.bh) * root.offset) * root.scale * 1phx;
+    }
+}
+
+// Window used when the screens are split; shows only the bottom screen.
+export component BottomWindow inherits Window {
+    in property <image> bottom-image;
+    in property <bool> integer-scaling;
+    in property <bool> smoothing;
+    callback key(string);
+    title: "cc3dsfs - Bottom Screen";
+    preferred-width: 640px;
+    preferred-height: 480px;
+    background: #000000;
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(e) => {
+            root.key(e.text);
+            accept
+        }
+        Screens {
+            bottom-image: root.bottom-image;
+            show-top: false;
+            integer-scaling: root.integer-scaling;
+            smoothing: root.smoothing;
+        }
+    }
+}
+
+// System-Settings style page: title bar, scrolling list, "B Back" pill.
+component Page inherits Rectangle {
+    in property <string> title;
+    callback back;
+    background: Theme.panel;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.panel-edge;
+    clip: true;
+    drop-shadow-blur: 14px;
+    drop-shadow-color: Theme.shadow;
+
+    GlossBar {
+        y: 0;
+        height: 48px;
+        Text {
+            text: root.title;
+            font-size: Theme.font-title;
+            font-weight: 700;
+            color: Theme.text;
+        }
+        Rectangle {
+            x: 0;
+            width: 6px;
+            background: Theme.accent;
+        }
+    }
+    Flickable {
+        y: 48px;
+        height: parent.height - 48px - 62px;
+        content-height: list.preferred-height;
+        list := VerticalLayout {
+            @children
+        }
+    }
+    GlossBar {
+        y: parent.height - 62px;
+        height: 62px;
+        Pill {
+            x: 14px;
+            badge: "B";
+            text: "Back";
+            clicked => { root.back(); }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "cc3dsfs";
+    preferred-width: 800px;
+    preferred-height: 720px;
+    min-width: 400px;
+    min-height: 320px;
+    background: #000000;
+
+    // --- Capture state, set from Rust
+    in property <image> top-image;
+    in property <image> bottom-image;
+    in property <bool> connected;
+    in property <bool> connecting;
+    in property <bool> is-3ds: true;
+    in property <bool> can-3d;
+    in property <string> device-name;
+    in property <string> device-driver;
+    in property <string> status-message;
+    in property <string> clock;
+    in property <int> fps;
+    in property <[DeviceItem]> devices;
+    in property <[string]> crop-names;
+    in property <[string]> audio-devices;
+    in property <[bool]> profile-exists: [false, false, false, false];
+    in property <string> toast;
+
+    // --- Settings (two-way, persisted by Rust)
+    in-out property <int> layout;
+    in-out property <float> bottom-scale: 1.0;
+    in-out property <float> screen-offset: 0.5;
+    in-out property <float> separator;
+    in-out property <bool> integer-scaling;
+    in-out property <bool> smoothing;
+    in-out property <int> top-rotation;
+    in-out property <int> bottom-rotation;
+    in-out property <int> crop-index;
+    in-out property <bool> game-crops;
+    in-out property <float> volume: 100;
+    in-out property <bool> muted;
+    in-out property <int> audio-device-index;
+    in-out property <bool> enable-3d;
+    in-out property <int> mode-3d;
+    in-out property <bool> fullscreen;
+    in-out property <bool> split-windows;
+    in-out property <bool> auto-connect: true;
+    in-out property <int> theme: 0;
+
+    // --- UI state
+    in-out property <bool> menu-open;
+    in-out property <string> page: "";
+    property <bool> show-menu: menu-open || !connected;
+    property <bool> show-home-hint;
+
+    callback settings-changed();
+    callback connect-device(int);
+    callback disconnect();
+    callback toggle-fullscreen();
+    callback save-profile(int);
+    callback load-profile(int);
+    callback reset-settings();
+    callback quit();
+
+    out property <[string]> layout-names: ["Top above bottom", "Bottom above top", "Side by side", "Side by side (bottom left)", "Top screen only", "Bottom screen only"];
+    out property <[string]> mode-3d-names: ["Left eye", "Side by side"];
+
+    function changed() {
+        Theme.index = root.theme;
+        root.settings-changed();
+    }
+
+    function cycle(value: int, count: int, delta: int) -> int {
+        return Math.mod(value + delta + count, count);
+    }
+
+    function rotation-name(deg: int) -> string {
+        return deg == 0 ? "Normal" : (deg + "°");
+    }
+
+    init => {
+        Theme.index = root.theme;
+    }
+
+    forward-focus: keys;
+
+    keys := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.Escape) {
+                if (root.page != "") {
+                    root.page = "";
+                } else if (root.connected) {
+                    root.menu-open = !root.menu-open;
+                }
+                return accept;
+            }
+            if (e.text == Key.F11 || (e.text == Key.Return && e.modifiers.alt)) {
+                root.toggle-fullscreen();
+                return accept;
+            }
+            if (e.text == "m" && !root.show-menu) {
+                root.muted = !root.muted;
+                root.changed();
+                return accept;
+            }
+            reject
+        }
+
+        Screens {
+            top-image: root.top-image;
+            bottom-image: root.bottom-image;
+            show-top: root.layout != 5;
+            show-bottom: root.layout != 4 && !root.split-windows;
+            arrangement: root.layout >= 4 ? 0 : root.layout;
+            bottom-scale: root.bottom-scale;
+            offset: root.screen-offset;
+            separator: root.separator;
+            integer-scaling: root.integer-scaling;
+            smoothing: root.smoothing;
+        }
+
+        // Right click toggles the HOME Menu; double click toggles fullscreen.
+        TouchArea {
+            enabled: !root.show-menu;
+            pointer-event(e) => {
+                if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
+                    root.menu-open = true;
+                }
+            }
+            double-clicked => { root.toggle-fullscreen(); }
+            moved => {
+                root.show-home-hint = true;
+                hint-timer.running = false;
+                hint-timer.running = true;
+            }
+        }
+
+        hint-timer := Timer {
+            interval: 2s;
+            running: false;
+            triggered => {
+                root.show-home-hint = false;
+                self.running = false;
+            }
+        }
+
+        // HOME button pill that appears while the mouse moves over the capture.
+        if !root.show-menu: Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: parent.height - self.height - 16px;
+            width: 132px;
+            height: 40px;
+            opacity: root.show-home-hint ? 1 : 0;
+            animate opacity { duration: 200ms; }
+            Pill {
+                width: parent.width;
+                text: "HOME";
+                icon: Icons.home;
+                clicked => { root.menu-open = true; }
+            }
+        }
+
+        if root.show-menu: home := Rectangle {
+            opacity: 0;
+            init => { self.opacity = 1; }
+            animate opacity { duration: 160ms; }
+
+            Stripes { }
+
+            // Top bar: title, connection and clock.
+            GlossBar {
+                y: 0;
+                height: 44px;
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 12px;
+                    Text {
+                        text: "cc3dsfs";
+                        vertical-alignment: center;
+                        font-size: 18px;
+                        font-weight: 800;
+                        color: Theme.accent;
+                    }
+                    Rectangle {
+                        width: 12px;
+                        height: 12px;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: 6px;
+                        background: root.connected ? #46c35a : root.connecting ? #f0b429 : #bbbbbb;
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.connected ? root.device-name : root.connecting ? "Connecting…" : "No capture board";
+                        vertical-alignment: center;
+                        color: Theme.text;
+                        font-size: Theme.font-body;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.clock;
+                        vertical-alignment: center;
+                        color: Theme.text;
+                        font-size: Theme.font-body;
+                        font-weight: 700;
+                    }
+                }
+            }
+
+            // Upper "screen": a banner describing the current state.
+            banner := Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: 60px;
+                width: min(parent.width - 32px, 620px);
+                height: 120px;
+                border-radius: 16px;
+                background: @linear-gradient(135deg, Theme.accent.brighter(0.35) 0%, Theme.accent 100%);
+                drop-shadow-blur: 10px;
+                drop-shadow-offset-y: 3px;
+                drop-shadow-color: Theme.shadow;
+                VerticalLayout {
+                    padding: 18px;
+                    spacing: 6px;
+                    alignment: center;
+                    Text {
+                        text: root.connected ? "Capturing" : root.connecting ? "Connecting to your capture board…" : "Waiting for a capture board";
+                        color: #ffffff;
+                        font-size: 24px;
+                        font-weight: 800;
+                    }
+                    Text {
+                        text: root.connected
+                            ? root.device-name + "  ·  " + root.fps + " fps  ·  Esc to return"
+                            : root.status-message != "" ? root.status-message : "Plug in a Loopy 3DS or DS capture board. It connects automatically.";
+                        color: #ffffffdd;
+                        font-size: Theme.font-body;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            // Icon grid, the "bottom screen".
+            Flickable {
+                y: banner.y + banner.height + 20px;
+                height: parent.height - self.y - 72px;
+                content-height: grid.preferred-height;
+                grid := HorizontalLayout {
+                    alignment: center;
+                    padding-top: 8px;
+                    Rectangle {
+                        property <int> per-row: max(1, Math.floor((root.width - 32px) / 116px));
+                        width: per-row * 116px;
+                        height: Math.ceil(9 / per-row) * 140px;
+                        for tile[i] in [
+                            { label: "Connection", glyph: Icons.connect, page: "connection" },
+                            { label: "Layout", glyph: Icons.layout, page: "layout" },
+                            { label: "Video", glyph: Icons.video, page: "video" },
+                            { label: "Audio", glyph: Icons.audio, page: "audio" },
+                            { label: "3D", glyph: Icons.depth, page: "3d" },
+                            { label: "Profiles", glyph: Icons.profiles, page: "profiles" },
+                            { label: "Theme", glyph: Icons.theme, page: "theme" },
+                            { label: "Status", glyph: Icons.status, page: "status" },
+                            { label: "Fullscreen", glyph: Icons.fullscreen, page: "!fullscreen" },
+                        ]: Tile {
+                            x: Math.mod(i, parent.per-row) * 116px + 4px;
+                            y: Math.floor(i / parent.per-row) * 140px;
+                            label: tile.label;
+                            glyph: tile.glyph;
+                            active: root.page == tile.page;
+                            clicked => {
+                                if (tile.page == "!fullscreen") {
+                                    root.toggle-fullscreen();
+                                } else {
+                                    root.page = tile.page;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Bottom bar.
+            GlossBar {
+                y: parent.height - 62px;
+                height: 62px;
+                HorizontalLayout {
+                    padding: 12px;
+                    spacing: 12px;
+                    Pill {
+                        text: "Quit";
+                        icon: Icons.power;
+                        clicked => { root.quit(); }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Pill {
+                        text: root.connected ? "Resume" : "Connect";
+                        primary: true;
+                        enabled: root.connected || root.devices.length > 0;
+                        clicked => {
+                            if (root.connected) {
+                                root.menu-open = false;
+                            } else {
+                                root.connect-device(0);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Settings pages slide over the HOME Menu.
+            if root.page != "": Rectangle {
+                background: #00000055;
+                TouchArea {
+                    clicked => { root.page = ""; }
+                }
+                page := Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    y: 20px;
+                    width: min(parent.width - 24px, 720px);
+                    height: parent.height - 40px;
+
+                    if root.page == "connection": Page {
+                        title: "Connection";
+                        back => { root.page = ""; }
+                        Row {
+                            label: root.connected ? root.device-name : "Not connected";
+                            hint: root.connected ? "Driver: " + root.device-driver : root.status-message;
+                            Pill {
+                                x: parent.width - self.width - 16px;
+                                y: (parent.height - self.height) / 2;
+                                text: "Disconnect";
+                                enabled: root.connected || root.connecting;
+                                clicked => { root.disconnect(); }
+                            }
+                        }
+                        ToggleRow {
+                            label: "Connect automatically";
+                            hint: "Connect and reconnect when a board is plugged in";
+                            alt: true;
+                            checked <=> root.auto-connect;
+                            toggled => { root.changed(); }
+                        }
+                        Row {
+                            label: "Boards found";
+                            hint: root.devices.length == 0 ? "None. Check the cable and the driver (see README)." : "Select one to connect";
+                        }
+                        for dev[i] in root.devices: Row {
+                            label: dev.name;
+                            hint: dev.detail;
+                            alt: Math.mod(i, 2) == 0;
+                            Pill {
+                                x: parent.width - self.width - 16px;
+                                y: (parent.height - self.height) / 2;
+                                text: "Connect";
+                                primary: true;
+                                clicked => { root.connect-device(i); }
+                            }
+                        }
+                    }
+
+                    if root.page == "layout": Page {
+                        title: "Layout";
+                        back => { root.page = ""; }
+                        StepperRow {
+                            label: "Screens";
+                            value: root.layout-names[root.layout];
+                            prev => { root.layout = root.cycle(root.layout, 6, -1); root.changed(); }
+                            next => { root.layout = root.cycle(root.layout, 6, 1); root.changed(); }
+                        }
+                        SliderRow {
+                            label: "Bottom screen size";
+                            hint: "Relative to the top screen";
+                            alt: true;
+                            minimum: 0.25;
+                            maximum: 2.0;
+                            step: 0.05;
+                            suffix: "x";
+                            value <=> root.bottom-scale;
+                            changed => { root.changed(); }
+                        }
+                        SliderRow {
+                            label: "Screen offset";
+                            hint: "Where the smaller screen sits";
+                            minimum: 0;
+                            maximum: 1;
+                            step: 0.05;
+                            value <=> root.screen-offset;
+                            changed => { root.changed(); }
+                        }
+                        SliderRow {
+                            label: "Gap between screens";
+                            alt: true;
+                            minimum: 0;
+                            maximum: 120;
+                            step: 2;
+                            suffix: " px";
+                            value <=> root.separator;
+                            changed => { root.changed(); }
+                        }
+                        ToggleRow {
+                            label: "Split into two windows";
+                            hint: "Bottom screen gets its own window (for a second monitor)";
+                            checked <=> root.split-windows;
+                            toggled => { root.changed(); }
+                        }
+                        ToggleRow {
+                            label: "Fullscreen";
+                            hint: "F11 or double click";
+                            alt: true;
+                            checked: root.fullscreen;
+                            toggled => { root.toggle-fullscreen(); }
+                        }
+                    }
+
+                    if root.page == "video": Page {
+                        title: "Video";
+                        back => { root.page = ""; }
+                        StepperRow {
+                            label: "Crop";
+                            hint: root.is-3ds ? "For DS, GBA and Virtual Console games" : "For GBA games";
+                            value: root.crop-names.length > 0 ? root.crop-names[root.crop-index] : "-";
+                            prev => { root.crop-index = root.cycle(root.crop-index, root.crop-names.length, -1); root.changed(); }
+                            next => { root.crop-index = root.cycle(root.crop-index, root.crop-names.length, 1); root.changed(); }
+                        }
+                        ToggleRow {
+                            label: "Game-specific crops";
+                            hint: "Pokémon, Mystery Dungeon…";
+                            alt: true;
+                            checked <=> root.game-crops;
+                            toggled => { root.crop-index = 0; root.changed(); }
+                        }
+                        ToggleRow {
+                            label: "Integer scaling";
+                            hint: "Sharp pixels, may leave borders";
+                            checked <=> root.integer-scaling;
+                            toggled => { root.changed(); }
+                        }
+                        ToggleRow {
+                            label: "Smoothing";
+                            hint: "Blur when scaling";
+                            alt: true;
+                            checked <=> root.smoothing;
+                            toggled => { root.changed(); }
+                        }
+                        StepperRow {
+                            label: "Top screen rotation";
+                            value: root.rotation-name(root.top-rotation);
+                            prev => { root.top-rotation = Math.mod(root.top-rotation + 270, 360); root.changed(); }
+                            next => { root.top-rotation = Math.mod(root.top-rotation + 90, 360); root.changed(); }
+                        }
+                        StepperRow {
+                            label: "Bottom screen rotation";
+                            alt: true;
+                            value: root.rotation-name(root.bottom-rotation);
+                            prev => { root.bottom-rotation = Math.mod(root.bottom-rotation + 270, 360); root.changed(); }
+                            next => { root.bottom-rotation = Math.mod(root.bottom-rotation + 90, 360); root.changed(); }
+                        }
+                    }
+
+                    if root.page == "audio": Page {
+                        title: "Audio";
+                        back => { root.page = ""; }
+                        SliderRow {
+                            label: "Volume";
+                            minimum: 0;
+                            maximum: 200;
+                            step: 5;
+                            suffix: "%";
+                            value <=> root.volume;
+                            changed => { root.changed(); }
+                        }
+                        ToggleRow {
+                            label: "Mute";
+                            hint: "M while capturing";
+                            alt: true;
+                            checked <=> root.muted;
+                            toggled => { root.changed(); }
+                        }
+                        StepperRow {
+                            label: "Output device";
+                            value: root.audio-devices.length > 0 ? root.audio-devices[root.audio-device-index] : "Default";
+                            prev => { root.audio-device-index = root.cycle(root.audio-device-index, root.audio-devices.length, -1); root.changed(); }
+                            next => { root.audio-device-index = root.cycle(root.audio-device-index, root.audio-devices.length, 1); root.changed(); }
+                        }
+                    }
+
+                    if root.page == "3d": Page {
+                        title: "3D";
+                        back => { root.page = ""; }
+                        Row {
+                            label: root.can-3d ? "This board supports 3D" : "3D not available";
+                            hint: root.can-3d ? "" : "Needs a New 3DS XL board with 3D support on a USB 3 port";
+                        }
+                        ToggleRow {
+                            label: "Capture in 3D";
+                            alt: true;
+                            checked <=> root.enable-3d;
+                            toggled => { root.changed(); }
+                        }
+                        StepperRow {
+                            label: "3D display";
+                            value: root.mode-3d-names[root.mode-3d];
+                            prev => { root.mode-3d = root.cycle(root.mode-3d, 2, -1); root.changed(); }
+                            next => { root.mode-3d = root.cycle(root.mode-3d, 2, 1); root.changed(); }
+                        }
+                    }
+
+                    if root.page == "profiles": Page {
+                        title: "Profiles";
+                        back => { root.page = ""; }
+                        for slot[i] in root.profile-exists: Row {
+                            label: "Profile " + (i + 1);
+                            hint: slot ? "Saved" : "Empty";
+                            alt: Math.mod(i, 2) == 1;
+                            HorizontalLayout {
+                                x: parent.width - self.width - 16px;
+                                width: 230px;
+                                spacing: 10px;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+                                Pill {
+                                    text: "Save";
+                                    clicked => { root.save-profile(i); }
+                                }
+                                Pill {
+                                    text: "Load";
+                                    primary: true;
+                                    enabled: slot;
+                                    clicked => { root.load-profile(i); }
+                                }
+                            }
+                        }
+                        Row {
+                            label: "Reset all settings";
+                            Pill {
+                                x: parent.width - self.width - 16px;
+                                y: (parent.height - self.height) / 2;
+                                text: "Reset";
+                                clicked => { root.reset-settings(); }
+                            }
+                        }
+                    }
+
+                    if root.page == "theme": Page {
+                        title: "Theme";
+                        back => { root.page = ""; }
+                        for name[i] in Theme.names: Row {
+                            label: name;
+                            alt: Math.mod(i, 2) == 1;
+                            Rectangle {
+                                x: parent.width - self.width - 20px;
+                                y: (parent.height - self.height) / 2;
+                                width: 34px;
+                                height: 34px;
+                                border-radius: 17px;
+                                border-width: root.theme == i ? 3px : 1px;
+                                border-color: root.theme == i ? Theme.text : Theme.panel-edge;
+                                background: i == 1 ? #3d4148 : i == 2 ? #e23a2e : i == 3 ? #ef6f8f : i == 4 ? #8fa3b3 : i == 5 ? #4caf50 : i == 6 ? #6c4bc6 : #12a5e2;
+                            }
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.theme = i;
+                                    root.changed();
+                                }
+                            }
+                        }
+                    }
+
+                    if root.page == "status": Page {
+                        title: "Status";
+                        back => { root.page = ""; }
+                        Row {
+                            label: "Board";
+                            hint: root.connected ? root.device-name : "Not connected";
+                        }
+                        Row {
+                            label: "Driver";
+                            hint: root.connected ? root.device-driver : "-";
+                            alt: true;
+                        }
+                        Row {
+                            label: "Frame rate";
+                            hint: root.fps + " fps";
+                        }
+                        Row {
+                            label: "3D";
+                            hint: root.can-3d ? (root.enable-3d ? "On" : "Off") : "Not available";
+                            alt: true;
+                        }
+                        Row {
+                            label: "Shortcuts";
+                            hint: "Esc: HOME Menu · F11: fullscreen · M: mute · right click: menu";
+                        }
+                        Row {
+                            label: "About";
+                            hint: "cc3dsfs Rust edition. Based on cc3dsfs by Lorenzooone (MIT).";
+                            alt: true;
+                        }
+                        Rectangle {
+                            height: 150px;
+                            AboutSlint {
+                                height: 130px;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Short notifications ("Profile 1 saved").
+        if root.toast != "": Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: 54px;
+            width: toast-text.preferred-width + 36px;
+            height: 36px;
+            border-radius: 18px;
+            background: #000000cc;
+            toast-text := Text {
+                text: root.toast;
+                color: #ffffff;
+                font-size: Theme.font-body;
+            }
+        }
+    }
+}

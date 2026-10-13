@@ -1,20 +1,3 @@
-# Byte-compiled / optimized / DLL files
-*.o
+/target
 *.dll
-cc3dsfs
-cc3dsfs.exe
-*.conf
-*.cfg
-keys/
-install/
-*.a
-*.zip
-ftd3xx/
-presets/
-build*/
-!build-dockers/
-.config/
-out/
-.vs/
-CMakeSettings.json
-*_icon_*
+*.pdb

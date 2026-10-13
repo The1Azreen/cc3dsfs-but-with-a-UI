@@ -1,8 +1,0 @@
-FT_ListDevices
-FT_GetVIDPID
-FT_Close
-FT_CreateDeviceInfoList
-FT_GetDeviceInfoList
-FT_GetDeviceInfoDetail
-FT_GetDriverVersion
-FT_GetLibraryVersion

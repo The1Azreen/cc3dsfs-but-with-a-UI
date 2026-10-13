@@ -1,3 +1,0 @@
-#!/bin/sh
-
-docker-scripts/docker_build_base buildriscv64 "-DCMAKE_TOOLCHAIN_FILE=toolchains/linux_riscv64.cmake"
