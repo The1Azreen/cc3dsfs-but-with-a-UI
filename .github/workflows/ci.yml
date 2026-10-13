@@ -1,9 +1,8 @@
 name: CI
 
+# Runs only when started by hand: GitHub > Actions > CI > Run workflow.
 on:
-  push:
-    branches: [main, pi-kiosk]
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   windows:
