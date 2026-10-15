@@ -1,4 +1,4 @@
-# cc3dsfs (Rust edition)
+# cc3dsfs Revamped (Rust edition) 
 
 A viewer for [Loopy's](https://3dscapture.com/) 3DS and DS capture boards, with a UI styled after the 3DS HOME Menu. It runs on Windows, and as a kiosk on a Raspberry Pi connected straight to a TV or an upscaler such as the Morph 4K.
 
