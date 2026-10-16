@@ -234,6 +234,8 @@ export component AppWindow inherits Window {
     in property <string> hdr-status;
     in-out property <int> bfi;
     in property <string> bfi-status;
+    in-out property <bool> vsync: true;
+    in property <bool> vsync-supported;
     // Black frame insertion: true on the refreshes that show black. Set from
     // Rust just before each redraw.
     in property <bool> bfi-black;
@@ -747,6 +749,13 @@ export component AppWindow inherits Window {
                         value: root.bfi-names[root.bfi];
                         prev => { root.bfi = root.cycle(root.bfi, root.bfi-names.length, -1); root.changed(); }
                         next => { root.bfi = root.cycle(root.bfi, root.bfi-names.length, 1); root.changed(); }
+                    }
+                    if root.vsync-supported: ToggleRow {
+                        label: "VSync";
+                        hint: root.bfi != 0 ? "Kept on while black frame insertion is on" : "Off shows frames sooner (less lag) but can tear";
+                        alt: true;
+                        checked <=> root.vsync;
+                        toggled => { root.changed(); }
                     }
                 }
 

@@ -149,6 +149,10 @@ Not available on the Raspberry Pi kiosk. Its display output is SDR only, so for 
 
 It needs the GPU renderer, so it isn't available when the Pi kiosk uses `linuxkms-software`.
 
+### VSync (Windows)
+
+**Video → VSync** (on by default) waits for the display's refresh before showing each frame. Turning it off shows frames as soon as they arrive, for less lag, but the picture can tear. In the HDR window it uses tearing presentation where the GPU and Windows support it. Black frame insertion keeps VSync on, since it needs every refresh. The Pi kiosk always syncs to the display.
+
 ### Two boards at once
 
 To show two capture boards at the same time, open cc3dsfs twice. Each window connects to a board that isn't already in use, and its title shows which board it has. **Connection** lists every board found, so you can switch a window to another one.
@@ -269,9 +273,12 @@ New 3DS XL and older 3DS/DS boards work out of the box. They use the same direct
 Compared to the original cc3dsfs, this version doesn't have:
 
 - macOS and Android builds. Linux is supported through the Raspberry Pi kiosk, but there is no desktop Linux package yet.
-- Non-Loopy devices: IS Nitro/TWL, Optimize, Partner CTR, Nisetro.
+- Non-Loopy devices: IS Nitro/TWL, Optimize (with its serial keys and v2 downgrade), Partner CTR, Nisetro, and the USB conflict setting they need.
 - WinUSB support for the 2024 DS boards.
-- Colour correction, PAR and the output framerate settings. The original's shaders are replaced by the screen filters above.
+- Video: colour correction, pixel aspect ratio (PAR), the fixed output framerate, the Async toggle, slow poll, extra padding for rounded corners, and window scaling in 0.5× steps. The original's shaders are replaced by the screen filters above.
+- Menu scaling and the restart-audio option.
+- Most keyboard shortcuts (only Esc, F11, Alt+Enter and M are here), the F1–F8 layout keys, gamepad navigation, and holding a button to reset settings.
+- The `CC3DSFS_CFG_DIR` setting and `--help`.
 
 ## Acknowledgements
 

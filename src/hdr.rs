@@ -388,6 +388,8 @@ fn run(rx: Receiver<Command>, events: &dyn Fn(HdrEvent), refresh_hz: &AtomicU32)
             }
         }
 
+        // BFI only works when every refresh is presented, so it keeps vsync on.
+        renderer.vsync = settings.vsync || settings.bfi != 0;
         if visible && settings.bfi != 0 {
             let black = bfi.next(settings.bfi, Instant::now());
             refresh_hz.store(bfi.refresh_hz().unwrap_or(0.0).to_bits(), Ordering::Relaxed);
@@ -444,6 +446,10 @@ struct Renderer {
     params: ID3D11Buffer,
     textures: [Option<ScreenTexture>; 2],
     rgba: Vec<u8>,
+    /// `DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING` when the display path supports it.
+    swap_flags: DXGI_SWAP_CHAIN_FLAG,
+    /// Wait for vsync when presenting.
+    vsync: bool,
 }
 
 fn compile(entry: PCSTR, target: PCSTR) -> Result<ID3DBlob, String> {
@@ -497,6 +503,13 @@ impl Renderer {
                 .and_then(|d| d.GetAdapter())
                 .and_then(|a| a.GetParent())
                 .map_err(err("finding the DXGI factory"))?;
+            // With VSync off, present right away (tearing allowed) when supported.
+            let tearing = factory.cast::<IDXGIFactory5>().is_ok_and(|f| {
+                let mut allow: i32 = 0;
+                f.CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, (&mut allow as *mut i32).cast(), size_of::<i32>() as u32).is_ok()
+                    && allow != 0
+            });
+            let swap_flags = if tearing { DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING } else { DXGI_SWAP_CHAIN_FLAG(0) };
             let desc = DXGI_SWAP_CHAIN_DESC1 {
                 Format: DXGI_FORMAT_R16G16B16A16_FLOAT,
                 SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
@@ -505,6 +518,7 @@ impl Renderer {
                 Scaling: DXGI_SCALING_STRETCH,
                 SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
                 AlphaMode: DXGI_ALPHA_MODE_IGNORE,
+                Flags: swap_flags.0 as u32,
                 ..Default::default()
             };
             let swap_chain = factory.CreateSwapChainForHwnd(&device, hwnd, &desc, None, None).map_err(err("creating the swap chain"))?;
@@ -560,6 +574,8 @@ impl Renderer {
                 params: params.unwrap(),
                 textures: [None, None],
                 rgba: Vec::new(),
+                swap_flags,
+                vsync: true,
             })
         }
     }
@@ -568,9 +584,19 @@ impl Renderer {
         self.target = None;
         unsafe {
             self.swap_chain
-                .ResizeBuffers(0, 0, 0, DXGI_FORMAT_UNKNOWN, DXGI_SWAP_CHAIN_FLAG(0))
+                .ResizeBuffers(0, 0, 0, DXGI_FORMAT_UNKNOWN, self.swap_flags)
                 .map_err(err("resizing the swap chain"))
         }
+    }
+
+    /// Present the back buffer: on the next vsync, or right away with VSync off.
+    fn present(&self) -> Result<(), String> {
+        let (interval, flags) = match (self.vsync, self.swap_flags == DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) {
+            (true, _) => (1, DXGI_PRESENT(0)),
+            (false, true) => (0, DXGI_PRESENT_ALLOW_TEARING),
+            (false, false) => (0, DXGI_PRESENT(0)),
+        };
+        unsafe { self.swap_chain.Present(interval, flags).ok().map_err(err("presenting")) }
     }
 
     fn render_target(&mut self) -> Result<ID3D11RenderTargetView, String> {
@@ -589,8 +615,8 @@ impl Renderer {
         let target = self.render_target()?;
         unsafe {
             self.context.ClearRenderTargetView(&target, &[0.0, 0.0, 0.0, 1.0]);
-            self.swap_chain.Present(1, DXGI_PRESENT(0)).ok().map_err(err("presenting"))
         }
+        self.present()
     }
 
     fn output_size(&self) -> (f32, f32) {
@@ -704,7 +730,7 @@ impl Renderer {
             ctx.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
             ctx.PSSetConstantBuffers(0, Some(&[Some(self.params.clone())]));
             ctx.Draw(3, 0);
-            self.swap_chain.Present(1, DXGI_PRESENT(0)).ok().map_err(err("presenting"))?;
+            self.present()?;
         }
         Ok(())
     }

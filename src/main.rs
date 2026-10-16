@@ -104,6 +104,7 @@ impl App {
         ui.set_hdr_output(s.hdr_output);
         ui.set_hdr_brightness(s.hdr_brightness.clamp(100.0, 1000.0));
         ui.set_bfi(s.bfi.clamp(0, bfi::MAX_BLACK_FRAMES + 1));
+        ui.set_vsync(s.vsync);
         ui.global::<Theme>().set_index(s.theme);
         let devices = self.audio_devices.borrow();
         let index = devices.iter().position(|d| *d == s.audio_device).unwrap_or(0);
@@ -142,6 +143,7 @@ impl App {
         s.hdr_output = ui.get_hdr_output();
         s.hdr_brightness = ui.get_hdr_brightness();
         s.bfi = ui.get_bfi();
+        s.vsync = ui.get_vsync();
         let index = ui.get_audio_device_index().max(0) as usize;
         s.audio_device = if index == 0 { String::new() } else { self.audio_devices.borrow().get(index).cloned().unwrap_or_default() };
     }
@@ -484,16 +486,43 @@ fn power_command(action: &str) -> Result<(), String> {
     if status.success() { Ok(()) } else { Err(format!("sudo exited with {status}")) }
 }
 
-/// Black frame insertion hook for a window: before each redraw, decides
-/// whether that refresh shows the game or black, and while BFI is on asks
-/// for the next redraw right away, so the window redraws on every vsync.
-/// Returns false when the renderer does not support it (software renderer).
-fn install_bfi(window: &slint::Window, bottom: bool, set_black: impl Fn(bool) + 'static) -> bool {
+/// Turn vsync on or off for the window being drawn. Slint's OpenGL renderer
+/// always asks for vsync, but the context is current during the rendering
+/// notifier, so its swap interval can be changed there (WGL on Windows).
+#[cfg(windows)]
+fn apply_vsync(api: &slint::GraphicsAPI<'_>, applied: &mut Option<bool>, vsync: bool) {
+    if *applied == Some(vsync) {
+        return;
+    }
+    if let slint::GraphicsAPI::NativeOpenGL { get_proc_address } = api {
+        let f = get_proc_address(c"wglSwapIntervalEXT");
+        if !f.is_null() {
+            // SAFETY: wglSwapIntervalEXT is BOOL WINAPI (int interval).
+            let swap_interval: extern "system" fn(i32) -> i32 = unsafe { std::mem::transmute(f) };
+            swap_interval(vsync as i32);
+        }
+    }
+    *applied = Some(vsync);
+}
+
+/// Per-frame hook for a window: applies the VSync setting, and for black
+/// frame insertion decides whether each refresh shows the game or black,
+/// asking for the next redraw right away so the window redraws on every
+/// vsync. Returns false when the renderer does not support hooks (software
+/// renderer).
+fn install_frame_hook(window: &slint::Window, bottom: bool, set_black: impl Fn(bool) + 'static) -> bool {
+    #[cfg(windows)]
+    let mut applied_vsync = None;
     window
-        .set_rendering_notifier(move |state, _| match state {
+        .set_rendering_notifier(move |state, _api| match state {
             slint::RenderingState::BeforeRendering => {
                 let mut black = false;
-                with_app(|app| black = app.bfi_frame(bottom));
+                with_app(|app| {
+                    black = app.bfi_frame(bottom);
+                    // BFI needs every refresh, so it keeps vsync on.
+                    #[cfg(windows)]
+                    apply_vsync(_api, &mut applied_vsync, app.settings.borrow().vsync || app.bfi_active(bottom));
+                });
                 set_black(black);
             }
             slint::RenderingState::AfterRendering => with_app(|app| {
@@ -567,7 +596,7 @@ fn main() -> Result<(), slint::PlatformError> {
     APP.with(|a| *a.borrow_mut() = Some(app.clone()));
 
     let weak = ui.as_weak();
-    let supported = install_bfi(ui.window(), false, move |black| {
+    let supported = install_frame_hook(ui.window(), false, move |black| {
         if let Some(ui) = weak.upgrade() {
             if ui.get_bfi_black() != black {
                 ui.set_bfi_black(black);
@@ -575,9 +604,11 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
     app.bfi_supported.set(supported);
+    // The Pi kiosk always flips on vsync (DRM/KMS), so the toggle is Windows only.
+    ui.set_vsync_supported(cfg!(windows) && !kiosk && supported);
     if let Some(bottom) = &bottom {
         let weak = bottom.as_weak();
-        install_bfi(bottom.window(), true, move |black| {
+        install_frame_hook(bottom.window(), true, move |black| {
             if let Some(bottom) = weak.upgrade() {
                 if bottom.get_bfi_black() != black {
                     bottom.set_bfi_black(black);

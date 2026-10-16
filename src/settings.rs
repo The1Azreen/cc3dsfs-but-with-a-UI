@@ -46,6 +46,9 @@ pub struct Settings {
     /// Black frame insertion: 0 off, 1 auto, 2.. = 1.. black frames per
     /// game frame (see `bfi.rs`).
     pub bfi: i32,
+    /// Wait for the display's refresh before showing a frame. Off lowers
+    /// latency but can tear. BFI keeps it on.
+    pub vsync: bool,
 }
 
 impl Default for Settings {
@@ -76,6 +79,7 @@ impl Default for Settings {
             hdr_output: false,
             hdr_brightness: 300.0,
             bfi: 0,
+            vsync: true,
         }
     }
 }
