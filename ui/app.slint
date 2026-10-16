@@ -100,8 +100,10 @@ export component BottomWindow inherits Window {
     in property <bool> smoothing;
     in property <int> filter-style;
     in property <float> filter-strength;
+    in property <bool> bfi-black;
     callback key(string);
     title: "cc3dsfs - Bottom Screen";
+    icon: @image-url("../assets/icon.png");
     preferred-width: 640px;
     preferred-height: 480px;
     background: #000000;
@@ -118,6 +120,10 @@ export component BottomWindow inherits Window {
             smoothing: root.smoothing;
             filter-style: root.filter-style;
             filter-strength: root.filter-strength / 100;
+        }
+        Rectangle {
+            visible: root.bfi-black;
+            background: #000000;
         }
     }
 }
@@ -170,7 +176,9 @@ component Page inherits Rectangle {
 }
 
 export component AppWindow inherits Window {
-    title: "cc3dsfs";
+    // The board's name tells two windows (two boards) apart in the taskbar.
+    title: root.connected ? "cc3dsfs - " + root.device-name : "cc3dsfs";
+    icon: @image-url("../assets/icon.png");
     preferred-width: 800px;
     preferred-height: 720px;
     min-width: 400px;
@@ -224,6 +232,11 @@ export component AppWindow inherits Window {
     in-out property <float> hdr-brightness: 300;
     in property <bool> hdr-supported;
     in property <string> hdr-status;
+    in-out property <int> bfi;
+    in property <string> bfi-status;
+    // Black frame insertion: true on the refreshes that show black. Set from
+    // Rust just before each redraw.
+    in property <bool> bfi-black;
 
     // --- UI state
     in-out property <bool> menu-open;
@@ -238,6 +251,10 @@ export component AppWindow inherits Window {
     property <bool> panel-side: root.width >= 760px;
     property <length> panel-w: panel-side ? min(460px, root.width * 0.45) : root.width;
     property <length> panel-h: panel-side ? root.height : root.height * 0.55;
+    // Where the game shows beside a page (the HDR window covers it on Windows).
+    out property <bool> hdr-preview: root.show-menu && root.live-preview;
+    out property <length> preview-width: root.panel-side ? root.width - root.panel-w : root.width;
+    out property <length> preview-height: root.panel-side ? root.height : root.height - root.panel-h;
 
     callback settings-changed();
     callback connect-device(int);
@@ -254,6 +271,7 @@ export component AppWindow inherits Window {
 
     out property <[string]> layout-names: ["Top above bottom", "Bottom above top", "Side by side", "Side by side (bottom left)", "Top screen only", "Bottom screen only"];
     out property <[string]> mode-3d-names: ["Left eye", "Side by side"];
+    out property <[string]> bfi-names: ["Off", "Auto", "1 black frame", "2 black frames", "3 black frames"];
 
     function changed() {
         Theme.index = root.theme;
@@ -314,6 +332,11 @@ export component AppWindow inherits Window {
             smoothing: root.smoothing;
             filter-style: root.filter-style;
             filter-strength: root.filter-strength / 100;
+        }
+
+        Rectangle {
+            visible: root.bfi-black && !root.show-menu;
+            background: #000000;
         }
 
         // Right click toggles the HOME Menu; double click toggles fullscreen.
@@ -550,17 +573,21 @@ export component AppWindow inherits Window {
                     }
                     Row {
                         label: "Boards found";
-                        hint: root.devices.length == 0 ? "None. Check the cable and the driver (see README)." : "Select one to connect";
+                        hint: root.devices.length == 0 ? "None. Check the cable and the driver (see README)."
+                            : root.devices.length > 1 ? "Select one to connect. Open cc3dsfs again to show another board at the same time"
+                            : "Select one to connect";
                     }
                     for dev[i] in root.devices: Row {
+                        property <bool> current: root.connected && dev.name == root.device-name;
                         label: dev.name;
                         hint: dev.detail;
                         alt: Math.mod(i, 2) == 0;
                         Pill {
                             x: parent.width - self.width - 16px;
                             y: (parent.height - self.height) / 2;
-                            text: "Connect";
-                            primary: true;
+                            text: parent.current ? "Connected" : "Connect";
+                            primary: !parent.current;
+                            enabled: !parent.current;
                             clicked => { root.connect-device(i); }
                         }
                     }
@@ -669,7 +696,7 @@ export component AppWindow inherits Window {
                     }
                     StepperRow {
                         label: "Screen filter";
-                        hint: "Shown when each 3DS pixel is at least 3 screen pixels";
+                        hint: "Shown when each 3DS pixel is at least 2 screen pixels";
                         value: FilterStyles.names[root.filter-style];
                         prev => { root.filter-style = root.cycle(root.filter-style, 4, -1); root.changed(); }
                         next => { root.filter-style = root.cycle(root.filter-style, 4, 1); root.changed(); }
@@ -713,6 +740,13 @@ export component AppWindow inherits Window {
                         value: root.rotation-name(root.bottom-rotation);
                         prev => { root.bottom-rotation = Math.mod(root.bottom-rotation + 270, 360); root.changed(); }
                         next => { root.bottom-rotation = Math.mod(root.bottom-rotation + 90, 360); root.changed(); }
+                    }
+                    StepperRow {
+                        label: "Black frame insertion";
+                        hint: root.bfi-status;
+                        value: root.bfi-names[root.bfi];
+                        prev => { root.bfi = root.cycle(root.bfi, root.bfi-names.length, -1); root.changed(); }
+                        next => { root.bfi = root.cycle(root.bfi, root.bfi-names.length, 1); root.changed(); }
                     }
                 }
 

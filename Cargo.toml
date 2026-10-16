@@ -24,6 +24,9 @@ slint = { version = "1.18.1", features = ["backend-linuxkms-noseat", "renderer-s
 
 # Windows: HDR output window rendered with Direct3D 11 (Slint draws SDR only).
 [target.'cfg(windows)'.dependencies]
+# The main window's HWND, to place the HDR window over the menu's live preview.
+slint = { version = "1.18.1", features = ["raw-window-handle-06"] }
+raw-window-handle = "0.6.2"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
@@ -40,6 +43,7 @@ windows = { version = "0.61", features = [
 [build-dependencies]
 slint-build = "1.18.1"
 zip = { version = "9.0.2", default-features = false, features = ["deflate"] }
+winresource = "0.1"
 
 [profile.release]
 lto = "thin"

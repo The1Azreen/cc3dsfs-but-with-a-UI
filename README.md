@@ -101,14 +101,16 @@ Presets change only screen settings: layout, gap, scaling, filter, crop and rota
 **Video → Screen filter** draws a filter over each screen:
 
 - **LCD grid**: a soft dark grid between pixels, the same in red, green and blue. The profile was measured from Game Sack's 4K footage of the 3DS. The default 30% strength matches it.
-- **Fine grid**: thin, sharp lines between pixels, like the Morph 4K's PSP and Vita masks.
+- **Fine grid**: thin, sharp lines between pixels, like the Morph 4K's PSP and Vita masks. Each line is a fifth of a 3DS pixel wide, rounded to whole screen pixels so every line is the same width.
 - **Scanlines**: horizontal lines only.
 
-![LCD grid, fine grid and scanlines on a 3DS capture at 4K](docs/screen-filters.png)
+Captured from a New 3DS XL (The Legend of Zelda: Ocarina of Time 3D) at the Game Sack: Top screen preset (9× on a 4K monitor) with the default 30% strength. Each tile is the same 48×32 3DS pixels, shown 1:1:
+
+![No filter, LCD grid, fine grid and scanlines on a New 3DS XL capture at 9x on 4K](docs/screen-filters.png)
 
 The filter follows each screen's own pixels. It stays aligned in every layout and screen position, and with crops, rotation, the bottom screen size slider and split windows. It also works at fractional scales such as the 4.5× both-screens view.
 
-It turns itself off when a 3DS pixel is smaller than 3 screen pixels, where a grid would only cause moiré. In practice it needs a large window or fullscreen on a 1440p or 4K display.
+It needs each 3DS pixel to be at least 2 screen pixels. Between 2 and 3, where a soft grid would cause moiré, the LCD grid and scanlines are drawn as thin 1-pixel lines instead. A small bottom screen in a side-by-side layout gets this. Below 2 the filter turns itself off. In practice it needs a large window or fullscreen on a 1440p or 4K display.
 
 ### HDR output (Windows)
 
@@ -117,6 +119,7 @@ A screen filter darkens the picture. The Morph 4K and RetroTINK 4K make up for t
 Turn on **Video → HDR output**.
 
 - While you're capturing with the menu closed, cc3dsfs shows the game in an HDR window, fullscreen on the same monitor.
+- The live preview next to the Layout, Video, 3D and Presets pages is in HDR too, so you can tune the filter and brightness while you watch.
 - **HDR brightness** sets the white level in nits (default 300). cc3dsfs then raises it further, by however much the screen filter darkens the picture.
 - Highlights roll off softly below the monitor's peak brightness instead of clipping.
 - **Esc** or a right click in the HDR window opens the HOME Menu. Closing the menu brings the HDR window back.
@@ -133,6 +136,30 @@ Measured on a 4K HDR monitor, with the Top screen preset, the LCD grid at 30%, a
 The grid looks the same in both.
 
 Not available on the Raspberry Pi kiosk. Its display output is SDR only, so for HDR on the Pi, use the Morph 4K's own HDR injection.
+
+### Black frame insertion
+
+**Video → Black frame insertion** shows each game frame for one display refresh and black for the next ones. Motion looks sharper, but the picture flickers and gets darker, so it needs a 120 Hz or faster display.
+
+- **Auto** picks the number of black frames from the display's refresh rate: 1 at 120–165 Hz, 2 at 180 Hz, 3 at 240 Hz. At 60 Hz it does nothing.
+- **1–3 black frames** force a number. If the display is too slow for it, frames get dropped.
+- The refresh rate is measured while the game is shown with the menu closed, and the Video page then shows it. If the output isn't synced to the display, BFI pauses rather than flicker unevenly.
+- It turns off while the HOME Menu is open.
+- With **HDR output**, the HDR window raises the brightness to make up for the black frames.
+
+It needs the GPU renderer, so it isn't available when the Pi kiosk uses `linuxkms-software`.
+
+### Two boards at once
+
+To show two capture boards at the same time, open cc3dsfs twice. Each window connects to a board that isn't already in use, and its title shows which board it has. **Connection** lists every board found, so you can switch a window to another one.
+
+To tie a window to one board, start it with `--device` and the board's serial (shown on the Connection page), for example in a shortcut:
+
+```
+cc3dsfs.exe --device 665F81B0
+```
+
+Both windows share the same settings file, so the window closed last keeps its settings.
 
 ## Controls
 
@@ -232,6 +259,8 @@ New 3DS XL and older 3DS/DS boards work out of the box. They use the same direct
 - `src/presets.rs`: the Game Sack and Morph 4K presets.
 - `src/layout.rs`: screen placement maths, shared with the HDR window.
 - `src/hdr.rs`, `src/hdr.hlsl`: the Windows HDR output window (Direct3D 11, scRGB).
+- `src/bfi.rs`: black frame insertion timing, shared by the Slint and HDR windows.
+- `assets/`: the app icon.
 - `ui/`: the Slint UI. `theme.slint` holds the 3DS-style components; `filter.slint` draws the screen filters; `app.slint` holds the windows and pages.
 - `pi/`: Raspberry Pi kiosk installer, launcher, systemd service and udev rules.
 
@@ -242,7 +271,7 @@ Compared to the original cc3dsfs, this version doesn't have:
 - macOS and Android builds. Linux is supported through the Raspberry Pi kiosk, but there is no desktop Linux package yet.
 - Non-Loopy devices: IS Nitro/TWL, Optimize, Partner CTR, Nisetro.
 - WinUSB support for the 2024 DS boards.
-- Colour correction, BFI, PAR and the output framerate settings. The original's shaders are replaced by the screen filters above.
+- Colour correction, PAR and the output framerate settings. The original's shaders are replaced by the screen filters above.
 
 ## Acknowledgements
 

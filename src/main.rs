@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audio;
+mod bfi;
 mod capture;
 #[cfg(windows)]
 mod hdr;
@@ -36,6 +37,9 @@ struct App {
     hdr: RefCell<Option<hdr::HdrOutput>>,
     #[cfg(windows)]
     hdr_visible: Cell<bool>,
+    /// Where the HDR window sits over the live preview (None when fullscreen or hidden).
+    #[cfg(windows)]
+    hdr_preview: Cell<Option<[i32; 4]>>,
     capture: CaptureManager,
     audio: RefCell<AudioOutput>,
     settings: RefCell<Settings>,
@@ -44,6 +48,14 @@ struct App {
     last_frame: RefCell<Option<Frame>>,
     frame_count: Cell<i32>,
     audio_devices: RefCell<Vec<String>>,
+    /// Black frame insertion state for the main and bottom windows.
+    bfi: RefCell<bfi::Bfi>,
+    bfi_bottom: RefCell<bfi::Bfi>,
+    /// Whether the renderer lets us run code before each redraw (not the software renderer).
+    bfi_supported: Cell<bool>,
+    /// Board serial from `--device`: this window only connects to that board,
+    /// so two windows can show two boards.
+    pinned_device: Option<String>,
 }
 
 thread_local! {
@@ -91,6 +103,7 @@ impl App {
         ui.set_filter_strength(s.filter_strength.clamp(0.0, 100.0));
         ui.set_hdr_output(s.hdr_output);
         ui.set_hdr_brightness(s.hdr_brightness.clamp(100.0, 1000.0));
+        ui.set_bfi(s.bfi.clamp(0, bfi::MAX_BLACK_FRAMES + 1));
         ui.global::<Theme>().set_index(s.theme);
         let devices = self.audio_devices.borrow();
         let index = devices.iter().position(|d| *d == s.audio_device).unwrap_or(0);
@@ -128,6 +141,7 @@ impl App {
         s.filter_strength = ui.get_filter_strength();
         s.hdr_output = ui.get_hdr_output();
         s.hdr_brightness = ui.get_hdr_brightness();
+        s.bfi = ui.get_bfi();
         let index = ui.get_audio_device_index().max(0) as usize;
         s.audio_device = if index == 0 { String::new() } else { self.audio_devices.borrow().get(index).cloned().unwrap_or_default() };
     }
@@ -166,7 +180,7 @@ impl App {
         self.sync_bottom_window();
         self.update_hdr();
         if s.auto_connect && !previous.auto_connect && self.connected.borrow().is_none() {
-            self.capture.connect(None);
+            self.capture.connect(self.pinned_device.clone());
         }
         self.render_last_frame();
     }
@@ -193,7 +207,7 @@ impl App {
         {
             let (x, y) = self.window_centre();
             let status = match hdr::display_at(x, y) {
-                Some(d) if d.hdr_enabled => format!("HDR display, {:.0} nits peak. Shown when the menu is closed", d.max_nits),
+                Some(d) if d.hdr_enabled => format!("HDR display, {:.0} nits peak. Also shown in this preview", d.max_nits),
                 Some(_) => "Turn on \"Use HDR\" in Windows display settings first".to_string(),
                 None => "No display information".to_string(),
             };
@@ -209,23 +223,71 @@ impl App {
             if !s.hdr_output || self.kiosk {
                 self.hdr.replace(None);
                 self.hdr_visible.set(false);
+                self.hdr_preview.set(None);
                 return;
             }
-            let mut hdr = self.hdr.borrow_mut();
-            let output = hdr.get_or_insert_with(|| {
-                hdr::HdrOutput::new(|event| {
-                    let _ = slint::invoke_from_event_loop(move || with_app(|app| app.handle_hdr_event(event)));
+            self.hdr
+                .borrow_mut()
+                .get_or_insert_with(|| {
+                    hdr::HdrOutput::new(|event| {
+                        let _ = slint::invoke_from_event_loop(move || with_app(|app| app.handle_hdr_event(event)));
+                    })
                 })
-            });
-            output.settings(&s);
-            let show = self.connected.borrow().is_some() && !self.menu_shown.get();
-            if show && !self.hdr_visible.get() {
-                let (x, y) = self.window_centre();
-                output.show(x, y);
-            } else if !show && self.hdr_visible.get() {
+                .settings(&s);
+        }
+        self.place_hdr();
+    }
+
+    #[cfg(windows)]
+    fn main_hwnd(&self) -> Option<isize> {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let handle = self.ui.window().window_handle();
+        match handle.window_handle().ok()?.as_raw() {
+            RawWindowHandle::Win32(win32) => Some(win32.hwnd.get()),
+            _ => None,
+        }
+    }
+
+    /// Main window handle and desktop rect of the menu's live preview, when shown.
+    #[cfg(windows)]
+    fn hdr_preview_target(&self) -> Option<(isize, [i32; 4])> {
+        if !self.ui.get_hdr_preview() {
+            return None;
+        }
+        let hwnd = self.main_hwnd()?;
+        let (x, y) = hdr::client_origin(hwnd);
+        let scale = self.ui.window().scale_factor();
+        let w = (self.ui.get_preview_width() * scale).round() as i32;
+        let h = (self.ui.get_preview_height() * scale).round() as i32;
+        (w > 0 && h > 0).then_some((hwnd, [x, y, w, h]))
+    }
+
+    /// Put the HDR window fullscreen (menu closed), over the live preview
+    /// (a page with a preview open), or hide it. Cheap when nothing changed,
+    /// so it also runs on a timer to follow page changes and window moves.
+    fn place_hdr(&self) {
+        #[cfg(windows)]
+        {
+            let hdr = self.hdr.borrow();
+            let Some(output) = hdr.as_ref() else { return };
+            let connected = self.connected.borrow().is_some();
+            let fullscreen = connected && !self.menu_shown.get();
+            let preview = if connected && !fullscreen { self.hdr_preview_target() } else { None };
+            let previous = self.hdr_preview.get();
+            if fullscreen {
+                if !self.hdr_visible.get() || previous.is_some() {
+                    let (x, y) = self.window_centre();
+                    output.show(x, y);
+                }
+            } else if let Some((owner, rect)) = preview {
+                if previous != Some(rect) {
+                    output.preview(owner, rect);
+                }
+            } else if self.hdr_visible.get() {
                 output.hide();
             }
-            self.hdr_visible.set(show);
+            self.hdr_visible.set(fullscreen || preview.is_some());
+            self.hdr_preview.set(preview.map(|(_, rect)| rect));
         }
     }
 
@@ -235,6 +297,11 @@ impl App {
             hdr::HdrEvent::OpenMenu => {
                 self.ui.set_menu_open(true);
                 let _ = self.ui.show();
+                // Take the focus back from the HDR window, or Windows shows
+                // the taskbar over the fullscreen menu.
+                if let Some(hwnd) = self.main_hwnd() {
+                    hdr::activate(hwnd);
+                }
             }
             hdr::HdrEvent::Closed => {
                 self.ui.set_hdr_output(false);
@@ -242,6 +309,47 @@ impl App {
             }
             hdr::HdrEvent::Error(e) => self.toast(&e),
         }
+    }
+
+    /// Whether a window should be inserting black frames: only while the game
+    /// is shown, and not under the HDR window (which does its own).
+    fn bfi_active(&self, bottom: bool) -> bool {
+        let s = self.settings.borrow();
+        if s.bfi == 0 || self.connected.borrow().is_none() {
+            return false;
+        }
+        if bottom {
+            s.split_windows
+        } else {
+            #[cfg(windows)]
+            if self.hdr_visible.get() {
+                return false;
+            }
+            !self.menu_shown.get()
+        }
+    }
+
+    /// Called just before a window redraws: whether this refresh is black.
+    fn bfi_frame(&self, bottom: bool) -> bool {
+        let state = if bottom { &self.bfi_bottom } else { &self.bfi };
+        if self.bfi_active(bottom) {
+            state.borrow_mut().next(self.settings.borrow().bfi, std::time::Instant::now())
+        } else {
+            state.borrow_mut().pause();
+            false
+        }
+    }
+
+    fn refresh_bfi_status(&self) {
+        #[allow(unused_mut)]
+        let (mut hz, mut supported) = (self.bfi.borrow().refresh_hz(), self.bfi_supported.get());
+        // With HDR output on, the game is shown (and measured) by the HDR
+        // window, which is hidden while this page is open.
+        #[cfg(windows)]
+        if let Some(output) = self.hdr.borrow().as_ref() {
+            (hz, supported) = (output.refresh_hz(), true);
+        }
+        self.ui.set_bfi_status(bfi::status(self.settings.borrow().bfi, hz, supported).into());
     }
 
     /// The split-screen window has its own copy of the display settings.
@@ -376,9 +484,36 @@ fn power_command(action: &str) -> Result<(), String> {
     if status.success() { Ok(()) } else { Err(format!("sudo exited with {status}")) }
 }
 
+/// Black frame insertion hook for a window: before each redraw, decides
+/// whether that refresh shows the game or black, and while BFI is on asks
+/// for the next redraw right away, so the window redraws on every vsync.
+/// Returns false when the renderer does not support it (software renderer).
+fn install_bfi(window: &slint::Window, bottom: bool, set_black: impl Fn(bool) + 'static) -> bool {
+    window
+        .set_rendering_notifier(move |state, _| match state {
+            slint::RenderingState::BeforeRendering => {
+                let mut black = false;
+                with_app(|app| black = app.bfi_frame(bottom));
+                set_black(black);
+            }
+            slint::RenderingState::AfterRendering => with_app(|app| {
+                if app.bfi_active(bottom) {
+                    let window = if bottom { app.bottom.as_ref().map(|b| b.window()) } else { Some(app.ui.window()) };
+                    if let Some(window) = window {
+                        window.request_redraw();
+                    }
+                }
+            }),
+            _ => {}
+        })
+        .is_ok()
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     // Kiosk mode: fullscreen on a single output, power controls instead of Quit.
     let kiosk = std::env::args().any(|a| a == "--kiosk");
+    // `--device <serial>`: only use that board (one per window when running two).
+    let pinned_device = std::env::args().skip_while(|a| a != "--device").nth(1);
     let ui = AppWindow::new()?;
     let bottom = if kiosk { None } else { Some(BottomWindow::new()?) };
     let mut settings = Settings::load();
@@ -394,9 +529,13 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.set_audio_devices(string_model(audio_devices.clone()));
 
     let weak = ui.as_weak();
-    let capture = CaptureManager::new(audio.queue.clone(), settings.auto_connect, move |event| {
+    // A pinned board is connected below, so the worker never tries another one first.
+    let capture = CaptureManager::new(audio.queue.clone(), settings.auto_connect && pinned_device.is_none(), move |event| {
         let _ = weak.upgrade_in_event_loop(move |_| with_app(|app| app.handle_event(event)));
     });
+    if pinned_device.is_some() {
+        capture.connect(pinned_device.clone());
+    }
     capture.set_3d(settings.enable_3d);
     audio.settings.set_volume(settings.volume as f32 / 100.0);
     audio.settings.set_muted(settings.muted);
@@ -410,6 +549,8 @@ fn main() -> Result<(), slint::PlatformError> {
         hdr: RefCell::new(None),
         #[cfg(windows)]
         hdr_visible: Cell::new(false),
+        #[cfg(windows)]
+        hdr_preview: Cell::new(None),
         capture,
         audio: RefCell::new(audio),
         settings: RefCell::new(settings),
@@ -418,8 +559,32 @@ fn main() -> Result<(), slint::PlatformError> {
         last_frame: RefCell::new(None),
         frame_count: Cell::new(0),
         audio_devices: RefCell::new(audio_devices),
+        bfi: RefCell::new(bfi::Bfi::default()),
+        bfi_bottom: RefCell::new(bfi::Bfi::default()),
+        bfi_supported: Cell::new(false),
+        pinned_device,
     });
     APP.with(|a| *a.borrow_mut() = Some(app.clone()));
+
+    let weak = ui.as_weak();
+    let supported = install_bfi(ui.window(), false, move |black| {
+        if let Some(ui) = weak.upgrade() {
+            if ui.get_bfi_black() != black {
+                ui.set_bfi_black(black);
+            }
+        }
+    });
+    app.bfi_supported.set(supported);
+    if let Some(bottom) = &bottom {
+        let weak = bottom.as_weak();
+        install_bfi(bottom.window(), true, move |black| {
+            if let Some(bottom) = weak.upgrade() {
+                if bottom.get_bfi_black() != black {
+                    bottom.set_bfi_black(black);
+                }
+            }
+        });
+    }
 
     app.push_settings_to_ui();
     app.sync_bottom_window();
@@ -555,10 +720,24 @@ fn main() -> Result<(), slint::PlatformError> {
         with_app(|app| {
             app.ui.set_clock(chrono::Local::now().format("%H:%M").to_string().into());
             app.ui.set_fps(app.frame_count.replace(0));
+            app.refresh_bfi_status();
         })
     };
     update_clock();
     clock_timer.start(slint::TimerMode::Repeated, Duration::from_secs(1), update_clock);
+
+    // Keep the HDR window over the live preview as pages open and close and
+    // the window moves or resizes.
+    let hdr_timer = slint::Timer::default();
+    if cfg!(windows) {
+        hdr_timer.start(slint::TimerMode::Repeated, Duration::from_millis(100), || {
+            with_app(|app| {
+                if app.menu_shown.get() {
+                    app.place_hdr();
+                }
+            })
+        });
+    }
 
     ui.show()?;
     app.update_split_window();

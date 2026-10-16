@@ -15,6 +15,14 @@ fn main() {
         return;
     }
 
+    // Exe icon, shown in Explorer and on shortcuts.
+    println!("cargo:rerun-if-changed=assets/icon.ico");
+    let mut resource = winresource::WindowsResource::new();
+    resource.set_icon("assets/icon.ico");
+    if let Err(e) = resource.compile() {
+        println!("cargo:warning=could not embed the exe icon: {e}");
+    }
+
     // OUT_DIR is target/<profile>/build/<pkg>/out; the exe lives in target/<profile>.
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let exe_dir = out_dir.ancestors().nth(3).expect("unexpected OUT_DIR layout").to_path_buf();

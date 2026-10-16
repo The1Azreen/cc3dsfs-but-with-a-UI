@@ -256,27 +256,37 @@ fn worker(shared: Arc<Shared>, rx: Receiver<Command>, audio: Arc<AudioQueue>, ev
 
         if shared.want_connected.load(Ordering::Relaxed) {
             let wanted = shared.wanted_serial.lock().unwrap().clone();
-            let target = match &wanted {
-                Some(serial) => devices.iter().find(|d| &d.serial == serial),
-                None => devices.first(),
-            };
-            if let Some(info) = target.cloned() {
-                events(Event::Connecting(info.clone()));
-                match open(&info) {
-                    Ok(mut session) => {
-                        shared.running.store(true, Ordering::Relaxed);
-                        events(Event::Connected { info: info.clone(), can_3d: session.can_3d() });
-                        let result = session.run(&output);
-                        shared.running.store(false, Ordering::Relaxed);
-                        drop(session);
-                        output.audio.clear();
-                        events(Event::Disconnected(result.err()));
-                        // Re-list right away so the UI reflects unplugged boards.
-                        last_listed = None;
-                        continue;
+            // A chosen board, or any board: a board another cc3dsfs window
+            // is already using fails to open, so the next one is tried.
+            let candidates: Vec<&DeviceInfo> = devices.iter().filter(|d| wanted.as_ref().is_none_or(|s| &d.serial == s)).collect();
+            let mut errors = Vec::new();
+            let mut opened = None;
+            for info in &candidates {
+                events(Event::Connecting((*info).clone()));
+                match open(info) {
+                    Ok(session) => {
+                        opened = Some(((*info).clone(), session));
+                        break;
                     }
-                    Err(err) => events(Event::Disconnected(Some(format!("{}: {err}", info.display_name())))),
+                    Err(err) => errors.push(format!("{}: {err}", info.display_name())),
                 }
+            }
+            if let Some((info, mut session)) = opened {
+                shared.running.store(true, Ordering::Relaxed);
+                events(Event::Connected { info, can_3d: session.can_3d() });
+                let result = session.run(&output);
+                shared.running.store(false, Ordering::Relaxed);
+                drop(session);
+                output.audio.clear();
+                events(Event::Disconnected(result.err()));
+                // Re-list right away so the UI reflects unplugged boards.
+                last_listed = None;
+                continue;
+            }
+            match errors.len() {
+                0 => {}
+                1 => events(Event::Disconnected(errors.pop())),
+                n => events(Event::Disconnected(Some(format!("None of the {n} boards could be opened (in use by another window?). {}", errors.join("; "))))),
             }
         }
 

@@ -21,10 +21,15 @@ export component PixelFilter inherits Rectangle {
 
     property <length> cell-w: root.width / max(1, root.columns);
     property <length> cell-h: root.height / max(1, root.rows);
-    // Below 3 screen pixels per source pixel a grid only produces moiré.
+    // Below 2 screen pixels per source pixel a grid only darkens everything.
     property <bool> active: root.filter-style != 0 && root.strength > 0
         && root.columns > 0 && root.rows > 0
-        && min(root.cell-w, root.cell-h) >= 3phx;
+        && min(root.cell-w, root.cell-h) >= 2phx;
+    // Below 3 the soft profiles beat against the screen pixels (moiré), so
+    // they are drawn as the fine grid's snapped 1-pixel lines instead.
+    property <bool> small: min(root.cell-w, root.cell-h) < 3phx;
+    property <bool> lines-x: root.active && (root.filter-style == 2 || (root.small && root.filter-style == 1));
+    property <bool> lines-y: root.lines-x || (root.active && root.small && root.filter-style == 3);
     // Darkness at a pixel edge, per axis.
     property <float> edge: root.strength * 0.6;
     property <color> c100: #000000.with-alpha(root.edge);
@@ -35,7 +40,7 @@ export component PixelFilter inherits Rectangle {
     clip: true;
 
     // Soft cosine profile, measured from Game Sack's 4K footage.
-    if root.active && root.filter-style == 1: Rectangle {
+    if root.active && !root.small && root.filter-style == 1: Rectangle {
         for i in root.columns: Rectangle {
             x: i * root.cell-w;
             width: root.cell-w;
@@ -48,22 +53,27 @@ export component PixelFilter inherits Rectangle {
         }
     }
 
-    // Thin hard lines between pixels.
-    if root.active && root.filter-style == 2: Rectangle {
-        for i in root.columns: Rectangle {
-            x: i * root.cell-w;
-            width: root.cell-w;
-            background: @linear-gradient(90deg, root.c100 0%, root.c100 10%, root.clear 10%, root.clear 90%, root.c100 90%, root.c100 100%);
+    // Thin hard lines between pixels, 20% of a source pixel wide. Snapped to
+    // whole screen pixels so every line is the same width (`hdr.hlsl` draws
+    // the same lines).
+    property <length> line-w: max(1phx, round(min(root.cell-w, root.cell-h) * 0.2 / 1phx) * 1phx);
+    if root.lines-x: Rectangle {
+        for i in root.columns + 1: Rectangle {
+            x: round((i * root.cell-w - root.line-w / 2) / 1phx) * 1phx;
+            width: root.line-w;
+            background: root.c100;
         }
-        for j in root.rows: Rectangle {
-            y: j * root.cell-h;
-            height: root.cell-h;
-            background: @linear-gradient(180deg, root.c100 0%, root.c100 10%, root.clear 10%, root.clear 90%, root.c100 90%, root.c100 100%);
+    }
+    if root.lines-y: Rectangle {
+        for j in root.rows + 1: Rectangle {
+            y: round((j * root.cell-h - root.line-w / 2) / 1phx) * 1phx;
+            height: root.line-w;
+            background: root.c100;
         }
     }
 
     // Rows only, with the soft profile.
-    if root.active && root.filter-style == 3: Rectangle {
+    if root.active && !root.small && root.filter-style == 3: Rectangle {
         for j in root.rows: Rectangle {
             y: j * root.cell-h;
             height: root.cell-h;

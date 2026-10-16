@@ -43,6 +43,9 @@ pub struct Settings {
     /// Brightness of SDR white in the HDR window, in nits, before the
     /// filter compensation.
     pub hdr_brightness: f32,
+    /// Black frame insertion: 0 off, 1 auto, 2.. = 1.. black frames per
+    /// game frame (see `bfi.rs`).
+    pub bfi: i32,
 }
 
 impl Default for Settings {
@@ -72,6 +75,7 @@ impl Default for Settings {
             filter_strength: 30.0,
             hdr_output: false,
             hdr_brightness: 300.0,
+            bfi: 0,
         }
     }
 }
